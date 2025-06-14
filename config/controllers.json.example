@@ -1,0 +1,108 @@
+
+{
+  "description": "Configuración de controladoras de semáforos",
+  "version": "1.0",
+  
+  "controllers": {
+    "CTRL_001": {
+      "id": "CTRL_001",
+      "name": "Controladora Principal",
+      "description": "Controladora de intersección principal",
+      "enabled": true,
+      
+      "network": {
+        "ip": "192.168.1.200",
+        "port": 8080,
+        "protocol": "http",
+        "timeout": 5,
+        "retry_attempts": 3,
+        "retry_delay": 2
+      },
+      
+      "endpoints": {
+        "analytic": "/api/analitico",
+        "status": "/api/analiticos",
+        "health": "/api/health",
+        "trajectory": "/api/trajectory_simulation"
+      },
+      
+      "phases": {
+        "fase1": {
+          "name": "Fase 1 - Norte-Sur",
+          "description": "Movimiento norte-sur",
+          "cameras": ["camera_1"],
+          "default_duration": 45
+        },
+        "fase2": {
+          "name": "Fase 2 - Este-Oeste", 
+          "description": "Movimiento este-oeste",
+          "cameras": [],
+          "default_duration": 35
+        },
+        "fase3": {
+          "name": "Fase 3 - Vuelta Izquierda Norte",
+          "description": "Vuelta izquierda desde norte",
+          "cameras": [],
+          "default_duration": 20
+        },
+        "fase4": {
+          "name": "Fase 4 - Vuelta Izquierda Sur",
+          "description": "Vuelta izquierda desde sur",
+          "cameras": [],
+          "default_duration": 20
+        }
+      },
+      
+      "analytics": {
+        "send_analytics": true,
+        "min_send_interval": 5,
+        "max_send_interval": 30,
+        "include_trajectory": false,
+        "include_speed": true,
+        "include_count": true
+      },
+      
+      "alerts": {
+        "connection_lost": true,
+        "response_timeout": true,
+        "invalid_response": true
+      }
+    },
+    
+    "CTRL_002": {
+      "id": "CTRL_002",
+      "name": "Controladora Secundaria",
+      "description": "Controladora de respaldo",
+      "enabled": false,
+      
+      "network": {
+        "ip": "192.168.1.201",
+        "port": 8080,
+        "protocol": "http",
+        "timeout": 5,
+        "retry_attempts": 3,
+        "retry_delay": 2
+      },
+      
+      "endpoints": {
+        "analytic": "/api/analitico",
+        "status": "/api/analiticos"
+      },
+      
+      "phases": {
+        "fase1": {
+          "name": "Fase 1",
+          "cameras": [],
+          "default_duration": 45
+        }
+      }
+    }
+  },
+  
+  "global_settings": {
+    "default_controller": "CTRL_001",
+    "failover_enabled": false,
+    "broadcast_analytics": false,
+    "log_all_communications": true
+  }
+}

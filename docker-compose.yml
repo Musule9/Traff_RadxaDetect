@@ -1,0 +1,232 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # Servicio Principal de Detección Vehicular
+  # =============================================================================
+  vehicle-detection:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: final
+    image: vehicle-detection:latest
+    container_name: vehicle-detection-prod
+    restart: unless-stopped
+    
+    ports:
+      - "8000:8000"  # API web
+    
+    environment:
+      - APP_ENV=production
+      - LOG_LEVEL=INFO
+      - MAX_CAMERAS=1
+      - DATA_RETENTION_DAYS=30
+      - USE_RKNN=1
+    
+    volumes:
+      - vehicle_data:/app/data
+      - vehicle_config:/app/config
+      - vehicle_models:/app/models
+      - vehicle_logs:/app/logs
+    
+    devices:
+      - /dev/dri:/dev/dri  # GPU access para Radxa
+      - /dev/mali0:/dev/mali0  # Mali GPU
+    
+    networks:
+      - vehicle_network
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/camera_health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
+  # Servicio de Desarrollo (opcional)
+  # =============================================================================
+  vehicle-detection-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: vehicle-detection:dev
+    container_name: vehicle-detection-dev
+    restart: "no"
+    
+    ports:
+      - "8001:8000"  # API de desarrollo
+      - "8888:8888"  # Jupyter Lab (opcional)
+    
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=DEBUG
+      - MAX_CAMERAS=1
+      - START_JUPYTER=false
+    
+    volumes:
+      - .:/app  # Código fuente montado para desarrollo
+      - vehicle_data_dev:/app/data
+      - vehicle_config_dev:/app/config
+      - vehicle_models:/app/models  # Compartir modelos entre dev y prod
+    
+    networks:
+      - vehicle_network
+    
+    profiles:
+      - development
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # =============================================================================
+  # Servicio de Simulación de Controladora (para testing)
+  # =============================================================================
+  mock-controller:
+    image: python:3.9-slim
+    container_name: mock-controller
+    restart: unless-stopped
+    
+    command: |
+      sh -c "
+        pip install fastapi uvicorn &&
+        python -c \"
+import json
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+import asyncio
+import random
+
+app = FastAPI(title='Mock Traffic Controller')
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_methods=['*'],
+    allow_headers=['*']
+)
+
+# Estado simulado de semáforos
+phases_state = {'fase1': False, 'fase2': False, 'fase3': False, 'fase4': False}
+analytic_received = []
+
+@app.get('/api/health')
+async def health():
+    return {'status': 'healthy', 'controller': 'mock'}
+
+@app.post('/api/analitico')
+async def receive_analytics(data: dict):
+    analytic_received.append(data)
+    print(f'📊 Analítico recibido: {data}')
+    return {'status': 'received', 'message': 'Analítico procesado', 'id': len(analytic_received)}
+
+@app.post('/api/analiticos')
+async def update_red_status(data: dict):
+    global phases_state
+    phases_state.update(data.get('fases', {}))
+    print(f'🚦 Estado de fases actualizado: {phases_state}')
+    return {'status': 'updated', 'fases': phases_state}
+
+@app.get('/api/analiticos')
+async def get_red_status():
+    return {'fases': phases_state}
+
+@app.get('/api/analytics/received')
+async def get_received_analytics():
+    return {'analytics': analytic_received, 'count': len(analytic_received)}
+
+@app.post('/api/trajectory_simulation')
+async def receive_trajectory(data: dict):
+    print(f'🎯 Trayectoria recibida: {data}')
+    return {'status': 'received'}
+
+# Simulación automática de cambios de semáforo (cada 30 segundos)
+async def simulate_traffic_lights():
+    while True:
+        await asyncio.sleep(30)
+        # Simular cambio de fase
+        fase = random.choice(['fase1', 'fase2', 'fase3', 'fase4'])
+        phases_state[fase] = not phases_state[fase]
+        print(f'🔄 Simulación: {fase} = {phases_state[fase]}')
+
+# Iniciar simulación en background
+import threading
+def start_simulation():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(simulate_traffic_lights())
+
+threading.Thread(target=start_simulation, daemon=True).start()
+
+if __name__ == '__main__':
+    uvicorn.run(app, host='0.0.0.0', port=8080)
+\"
+      "
+    
+    ports:
+      - "8080:8080"
+    
+    networks:
+      - vehicle_network
+    
+    profiles:
+      - testing
+
+# =============================================================================
+# Volúmenes Persistentes
+# =============================================================================
+volumes:
+  vehicle_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/vehicle-detection/data
+  
+  vehicle_config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/vehicle-detection/config
+  
+  vehicle_models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/vehicle-detection/models
+  
+  vehicle_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/vehicle-detection/logs
+  
+  # Volúmenes de desarrollo
+  vehicle_data_dev:
+    driver: local
+  vehicle_config_dev:
+    driver: local
+
+# =============================================================================
+# Red
+# =============================================================================
+networks:
+  vehicle_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

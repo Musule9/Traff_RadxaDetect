@@ -1,0 +1,78 @@
+{
+  "description": "Configuración de análisis de tráfico",
+  "version": "1.0",
+  
+  "lines": {
+    "line_1": {
+      "id": "line_1",
+      "name": "Línea Carril 1 - Conteo",
+      "description": "Primera línea para conteo de vehículos en carril 1",
+      "points": [[100, 300], [400, 300]],
+      "lane": "carril_1",
+      "line_type": "counting",
+      "distance_to_next": 10.0,
+      "direction": "north_to_south",
+      "enabled": true
+    },
+    "line_2": {
+      "id": "line_2",
+      "name": "Línea Carril 1 - Velocidad",
+      "description": "Segunda línea para cálculo de velocidad en carril 1",
+      "points": [[100, 250], [400, 250]],
+      "lane": "carril_1",
+      "line_type": "speed",
+      "distance_to_next": null,
+      "direction": "north_to_south",
+      "enabled": true
+    },
+    "line_3": {
+      "id": "line_3",
+      "name": "Línea Carril 2 - Conteo",
+      "description": "Primera línea para conteo de vehículos en carril 2",
+      "points": [[450, 300], [750, 300]],
+      "lane": "carril_2",
+      "line_type": "counting",
+      "distance_to_next": 10.0,
+      "direction": "north_to_south",
+      "enabled": false
+    }
+  },
+  
+  "zones": {
+    "red_zone_1": {
+      "id": "red_zone_1",
+      "name": "Zona Semáforo Rojo Principal",
+      "description": "Área para detectar vehículos durante semáforo en rojo",
+      "points": [[150, 200], [350, 200], [350, 400], [150, 400]],
+      "zone_type": "red_light",
+      "lane": "all",
+      "enabled": true,
+      "alert_threshold": 1,
+      "max_vehicles": 10
+    },
+    "stop_zone_1": {
+      "id": "stop_zone_1", 
+      "name": "Zona de Alto",
+      "description": "Área antes de la línea de alto",
+      "points": [[100, 350], [400, 350], [400, 450], [100, 450]],
+      "zone_type": "stop_line",
+      "lane": "carril_1",
+      "enabled": false
+    }
+  },
+  
+  "speed_calculation": {
+    "enabled": true,
+    "unit": "kmh",
+    "min_distance": 5.0,
+    "max_distance": 50.0,
+    "smoothing_factor": 0.3,
+    "outlier_threshold": 150
+  },
+  
+  "tracking": {
+    "min_track_length": 3,
+    "max_track_age": 30,
+    "track_confidence_threshold": 0.3
+  }
+}

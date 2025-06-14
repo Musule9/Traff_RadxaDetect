@@ -1,0 +1,47 @@
+
+{
+  "camera_1": {
+    "id": "camera_1",
+    "name": "Cámara Principal",
+    "description": "Cámara de intersección principal",
+    "enabled": true,
+    
+    "connection": {
+      "rtsp_url": "rtsp://admin:password@192.168.1.100:554/stream1",
+      "username": "admin",
+      "password": "password",
+      "timeout": 10,
+      "retry_interval": 5,
+      "max_retries": 3
+    },
+    
+    "traffic_control": {
+      "fase": "fase1",
+      "direccion": "norte",
+      "controladora_id": "CTRL_001",
+      "controladora_ip": "192.168.1.200",
+      "controladora_port": 8080
+    },
+    
+    "analysis": {
+      "lines": [],
+      "zones": [],
+      "enable_line_crossing": true,
+      "enable_speed_calculation": true,
+      "enable_red_zone_detection": true
+    },
+    
+    "image_processing": {
+      "auto_brightness": true,
+      "contrast_enhancement": true,
+      "noise_reduction": false,
+      "roi": null
+    },
+    
+    "alerts": {
+      "camera_offline": true,
+      "low_fps": true,
+      "analysis_errors": true
+    }
+  }
+}
