@@ -140,7 +140,7 @@ class VideoProcessor:
         
         logger.info("Procesamiento de video detenido")
     
-    async def _processing_loop(self):
+    def _processing_loop(self):
         """Loop principal de procesamiento"""
         rtsp_url = self.camera_config.get('rtsp_url')
         if not rtsp_url:
@@ -180,7 +180,7 @@ class VideoProcessor:
                     continue
                 
                 # Procesar frame
-                processed_frame = await self._process_frame(frame)
+                processed_frame = self._process_frame(frame)
                 
                 # Actualizar frame compartido para web
                 with self.frame_lock:
@@ -193,9 +193,9 @@ class VideoProcessor:
                 
             except Exception as e:
                 logger.error(f"Error en loop de procesamiento: {e}")
-                await asyncio.sleep(0.1)
+                asyncio.sleep(0.1)
     
-    async def _process_frame(self, frame: np.ndarray) -> np.ndarray:
+    def _process_frame(self, frame: np.ndarray) -> np.ndarray:
         """Procesar frame individual"""
         try:
             # Mejorar imagen si es necesario (modo nocturno)
@@ -212,7 +212,7 @@ class VideoProcessor:
             analysis_results = self.analyzer.analyze_frame(tracks, frame.shape)
             
             # Procesar resultados
-            await self._process_analysis_results(analysis_results, tracks)
+            self._process_analysis_results(analysis_results, tracks)
             
             # Dibujar overlay si está habilitado
             if self.system_config.get('show_overlay', True):

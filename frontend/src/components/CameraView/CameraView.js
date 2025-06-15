@@ -11,6 +11,7 @@ import {
 import { toast } from 'react-toastify';
 import { apiService } from '../../services/api';
 import { useSystem } from '../../context/SystemContext';
+import { CameraIcon } from '@heroicons/react/24/outline';
 
 const CameraView = () => {
   const { systemStatus } = useSystem();
