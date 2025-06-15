@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
-// Componentes principales - RUTAS CORREGIDAS
+// Componentes principales
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
 import CameraView from './components/CameraView/CameraView';
@@ -12,7 +12,7 @@ import AnalysisConfig from './components/AnalysisConfig/AnalysisConfig';
 import Dashboard from './components/Dashboard/Dashboard';
 import Reports from './components/Reports/Reports';
 import SystemConfig from './components/SystemConfig/SystemConfig';
-import LoadingSpinner from './components/Common/LoadingSpinner';
+import Login from './components/Login';
 
 // Servicios
 import { apiService } from './services/api';
@@ -23,32 +23,66 @@ import { SystemProvider, useSystem } from './context/SystemContext';
 // Estilos
 import './App.css';
 
-function AppContent() {
-  const { systemStatus, cameras, selectedCamera, setSelectedCamera, loadSystemData } = useSystem();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [currentView, setCurrentView] = useState('dashboard');
+// Componente de autenticación
+function AuthWrapper({ children }) {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    initializeApp();
+    // Verificar token existente
+    const token = localStorage.getItem('token');
+    if (token) {
+      setIsAuthenticated(true);
+    }
+    setLoading(false);
   }, []);
 
-  const initializeApp = async () => {
+  const handleLogin = async (username, password) => {
     try {
-      setIsLoading(true);
-      
-      // Cargar datos iniciales del sistema
-      await loadSystemData();
-      
-      toast.success('Sistema inicializado correctamente');
-      
+      const response = await apiService.login(username, password);
+      localStorage.setItem('token', response.token);
+      setIsAuthenticated(true);
+      toast.success('Login exitoso');
     } catch (error) {
-      console.error('Error inicializando aplicación:', error);
-      toast.error('Error inicializando el sistema');
-    } finally {
-      setIsLoading(false);
+      toast.error('Credenciales incorrectas');
+      throw error;
     }
   };
+
+  const handleLogout = async () => {
+    try {
+      await apiService.logout();
+    } catch (error) {
+      // Ignorar errores de logout
+    } finally {
+      localStorage.removeItem('token');
+      setIsAuthenticated(false);
+      toast.info('Sesión cerrada');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white">Cargando...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} />;
+  }
+
+  return React.cloneElement(children, { onLogout: handleLogout });
+}
+
+function AppContent({ onLogout }) {
+  const { systemStatus, cameras, selectedCamera, setSelectedCamera, loadSystemData } = useSystem();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    loadSystemData();
+  }, [loadSystemData]);
 
   const handleCameraSelect = (cameraId) => {
     setSelectedCamera(cameraId);
@@ -63,26 +97,12 @@ function AppContent() {
     }
   };
 
-  const handleViewChange = (view) => {
-    setCurrentView(view);
-  };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <LoadingSpinner text="Inicializando sistema..." />
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-gray-900">
       <div className="flex">
         {/* Sidebar */}
         <Sidebar
           collapsed={sidebarCollapsed}
-          currentView={currentView}
-          onViewChange={handleViewChange}
           cameras={cameras}
           selectedCamera={selectedCamera}
           onCameraSelect={handleCameraSelect}
@@ -96,6 +116,7 @@ function AppContent() {
             systemStatus={systemStatus}
             onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onRefresh={handleRefresh}
+            onLogout={onLogout}
           />
 
           <main className="p-6">
@@ -105,8 +126,8 @@ function AppContent() {
               <Route path="/camera" element={<CameraView />} />
               <Route path="/camera-config" element={<CameraConfig />} />
               <Route path="/analysis-config" element={<AnalysisConfig />} />
-              <Route path="/reports" element={<Reports />} />
               <Route path="/system-config" element={<SystemConfig />} />
+              <Route path="/reports" element={<Reports />} />
             </Routes>
           </main>
         </div>
@@ -133,7 +154,9 @@ function App() {
   return (
     <SystemProvider>
       <Router>
-        <AppContent />
+        <AuthWrapper>
+          <AppContent />
+        </AuthWrapper>
       </Router>
     </SystemProvider>
   );
