@@ -1,5 +1,9 @@
 version: '3.8'
 
+networks:
+  vehicle_net:
+    driver: bridge
+
 services:
   vehicle-detection:
     build:
@@ -9,16 +13,20 @@ services:
     container_name: vehicle-detection-prod
     restart: unless-stopped
     
+    networks:
+      - vehicle_net
+    
     ports:
       - "8000:8000"
     
     environment:
       - APP_ENV=production
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=info
       - MAX_CAMERAS=1
       - DATA_RETENTION_DAYS=30
       - USE_RKNN=1
       - TARGET_FPS=30
+      - PYTHONPATH=/app
     
     volumes:
       - ./data:/app/data
@@ -43,36 +51,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  mock-controller:
-    image: python:3.9-slim
-    container_name: mock-controller
-    restart: unless-stopped
-    
-    ports:
-      - "8080:8080"
-    
-    command: >
-      bash -c "
-      pip install fastapi uvicorn &&
-      python -c \"
-from fastapi import FastAPI;
-from fastapi.middleware.cors import CORSMiddleware;
-import uvicorn;
-app = FastAPI(title='Mock Controller');
-app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*']);
-phases = {'fase1': False, 'fase2': False, 'fase3': False, 'fase4': False};
-@app.get('/health')
-async def health(): return {'status': 'ok'};
-@app.post('/api/analitico')
-async def analytic(data: dict): print(f'Analítico: {data}'); return {'status': 'received'};
-@app.post('/api/analiticos')
-async def update_phases(data: dict): global phases; phases.update(data.get('fases', {})); return {'status': 'updated', 'fases': phases};
-@app.get('/api/analiticos')
-async def get_phases(): return {'fases': phases};
-uvicorn.run(app, host='0.0.0.0', port=8080);
-\"
-      "
-    
-    profiles:
-      - testing
