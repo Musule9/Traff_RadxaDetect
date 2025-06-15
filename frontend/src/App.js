@@ -1,78 +1,142 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import toast, { Toaster } from 'react-hot-toast';
-import Login from './components/Login';
-import Dashboard from './components/Dashboard';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+
+// Componentes principales - RUTAS CORREGIDAS
+import Sidebar from './components/Layout/Sidebar';
+import Header from './components/Layout/Header';
 import CameraView from './components/CameraView/CameraView';
-import Configuration from './components/Configuration';
+import CameraConfig from './components/CameraConfig/CameraConfig';
+import AnalysisConfig from './components/AnalysisConfig/AnalysisConfig';
+import Dashboard from './components/Dashboard/Dashboard';
 import Reports from './components/Reports/Reports';
-import Sidebar from './components/Sidebar';
-import Header from './components/Header';
-import api from './services/api';
+import SystemConfig from './components/SystemConfig/SystemConfig';
+import LoadingSpinner from './components/Common/LoadingSpinner';
+
+// Servicios
+import { apiService } from './services/api';
+
+// Contexto global
+import { SystemProvider, useSystem } from './context/SystemContext';
+
+// Estilos
 import './App.css';
 
-function App() {
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
-    const [loading, setLoading] = useState(true);
-    const [user, setUser] = useState(null);
+function AppContent() {
+  const { systemStatus, cameras, selectedCamera, setSelectedCamera, loadSystemData } = useSystem();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentView, setCurrentView] = useState('dashboard');
 
-    useEffect(() => {
-        checkAuth();
-    }, []);
+  useEffect(() => {
+    initializeApp();
+  }, []);
 
-    const checkAuth = async () => {
-        try {
-            const token = localStorage.getItem('token');
-            if (token) {
-                api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-                // Verificar token con una llamada a la API
-                await api.get('/api/camera/status');
-                setIsAuthenticated(true);
-                setUser({ username: 'admin' }); // Simplificado
-            }
-        } catch (error) {
-            localStorage.removeItem('token');
-            delete api.defaults.headers.common['Authorization'];
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleLogin = async (username, password) => {
-        try {
-            const response = await api.post('/api/auth/login', { username, password });
-            const { token } = response.data;
+  const initializeApp = async () => {
+    try {
+      setIsLoading(true);
       
-            localStorage.setItem('token', token);
-            api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      // Cargar datos iniciales del sistema
+      await loadSystemData();
       
-            setIsAuthenticated(true);
-            setUser({ username });
-            toast.success('Inicio de sesión exitoso');
-        } catch (error) {
-            toast.error('Credenciales inválidas');
-            throw error;
-        }
-    };
-
-    const handleLogout = async () => {
-        try {
-            await api.post('/api/auth/logout');
-        } catch (error) {
-            // Ignorar errores de logout
-        } finally {
-            localStorage.removeItem('token');
-            delete api.defaults.headers.common['Authorization'];
-            setIsAuthenticated(false);
-            setUser(null);
-            toast.success('Sesión cerrada');
-        }
-    };
-
-    if (loading) {
-        return (
-            <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-                <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500"></div></div>
-        )
+      toast.success('Sistema inicializado correctamente');
+      
+    } catch (error) {
+      console.error('Error inicializando aplicación:', error);
+      toast.error('Error inicializando el sistema');
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  const handleCameraSelect = (cameraId) => {
+    setSelectedCamera(cameraId);
+  };
+
+  const handleRefresh = async () => {
+    try {
+      await loadSystemData();
+      toast.success('Datos actualizados');
+    } catch (error) {
+      toast.error('Error actualizando datos');
+    }
+  };
+
+  const handleViewChange = (view) => {
+    setCurrentView(view);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <LoadingSpinner text="Inicializando sistema..." />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-900">
+      <div className="flex">
+        {/* Sidebar */}
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          currentView={currentView}
+          onViewChange={handleViewChange}
+          cameras={cameras}
+          selectedCamera={selectedCamera}
+          onCameraSelect={handleCameraSelect}
+        />
+
+        {/* Contenido principal */}
+        <div className={`flex-1 transition-all duration-300 ${
+          sidebarCollapsed ? 'ml-16' : 'ml-64'
+        }`}>
+          <Header
+            systemStatus={systemStatus}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+            onRefresh={handleRefresh}
+          />
+
+          <main className="p-6">
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/camera" element={<CameraView />} />
+              <Route path="/camera-config" element={<CameraConfig />} />
+              <Route path="/analysis-config" element={<AnalysisConfig />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/system-config" element={<SystemConfig />} />
+            </Routes>
+          </main>
+        </div>
+      </div>
+
+      {/* Toast notifications */}
+      <ToastContainer
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="dark"
+      />
+    </div>
+  );
 }
+
+function App() {
+  return (
+    <SystemProvider>
+      <Router>
+        <AppContent />
+      </Router>
+    </SystemProvider>
+  );
+}
+
+export default App;

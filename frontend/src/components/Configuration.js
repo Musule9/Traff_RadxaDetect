@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { CameraIcon, Cog6ToothIcon, WifiIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
