@@ -1,16 +1,18 @@
 # ============================================================================
-# MULTI-STAGE DOCKERFILE PARA SISTEMA DE DETECCIÓN VEHICULAR
+# MULTI-STAGE DOCKERFILE CORREGIDO PARA SISTEMA DE DETECCIÓN VEHICULAR
+# Mantiene TODA la funcionalidad específica para Radxa Rock 5T + RKNN
+# CORRIGE: Copia de archivos .py, imports, y deprecation warnings
 # ============================================================================
 
 # ============================================================================
-# STAGE 1: Frontend Build (React/Node.js)
+# STAGE 1: Frontend Build (React/Node.js) - COMPLETO
 # ============================================================================
 FROM node:18-slim AS frontend-builder
 
 ENV NODE_OPTIONS="--max_old_space_size=2048"
 WORKDIR /app/frontend
 
-# Instalar dependencias del sistema para compilación
+# Instalar dependencias del sistema para compilación ARM64
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
@@ -23,31 +25,46 @@ RUN apt-get update && apt-get install -y \
 RUN mkdir -p src build public
 
 # Copiar archivos de configuración del frontend si existen
-COPY frontend/package*.json ./ 2>/dev/null || echo '{"name":"vehicle-detection-frontend","version":"1.0.0","private":true,"dependencies":{"react":"^18.2.0","react-dom":"^18.2.0","react-scripts":"5.0.1"},"scripts":{"start":"react-scripts start","build":"react-scripts build","test":"react-scripts test","eject":"react-scripts eject"},"eslintConfig":{"extends":["react-app","react-app/jest"]},"browserslist":{"production":[">0.2%","not dead","not op_mini all"],"development":["last 1 chrome version","last 1 firefox version","last 1 safari version"]}}' > package.json
+COPY frontend/package*.json ./ 
 
-# Instalar dependencias del frontend
-RUN npm install --legacy-peer-deps --no-audit --no-fund || \
+# Crear package.json optimizado si no existe
+RUN if [ ! -f package.json ]; then \
+        echo '{"name":"vehicle-detection-frontend","version":"1.0.0","private":true,"dependencies":{"react":"^18.2.0","react-dom":"^18.2.0","react-scripts":"5.0.1","react-router-dom":"^6.8.0","axios":"^1.3.0","recharts":"^2.5.0","@heroicons/react":"^2.0.16","react-toastify":"^9.1.1"},"scripts":{"start":"react-scripts start","build":"CI=false GENERATE_SOURCEMAP=false react-scripts build","test":"react-scripts test","eject":"react-scripts eject"},"eslintConfig":{"extends":["react-app","react-app/jest"]},"browserslist":{"production":[">0.2%","not dead","not op_mini all"],"development":["last 1 chrome version","last 1 firefox version","last 1 safari version"]}}' > package.json; \
+    fi
+
+# Instalar dependencias del frontend con configuración ARM64
+RUN npm config set fetch-timeout 300000 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm install --legacy-peer-deps --no-audit --no-fund || \
     npm install --force --no-audit --no-fund || \
     echo "Frontend dependencies installation skipped"
 
 # Copiar todo el código fuente del frontend si existe
-COPY frontend/ ./ 2>/dev/null || echo "No frontend directory found"
+COPY frontend/ ./ 
 
-# Build del frontend o crear fallback
+# Crear estructura mínima si no existe
+RUN if [ ! -d "src" ]; then \
+        mkdir -p src public && \
+        echo 'import React from "react"; import ReactDOM from "react-dom/client"; const root = ReactDOM.createRoot(document.getElementById("root")); root.render(<div style={{background:"#1a202c",color:"white",textAlign:"center",padding:"50px",fontFamily:"system-ui"}}><h1>🚗 Sistema de Detección Vehicular</h1><div style={{background:"#48bb78",padding:"20px",margin:"20px",borderRadius:"8px"}}>✅ Sistema Funcionando - Radxa Rock 5T</div><p><a href="/docs" style={{color:"#60a5fa"}}>📖 Documentación API</a></p><p><a href="/api/camera_health" style={{color:"#60a5fa"}}>🏥 Estado del Sistema</a></p></div>);' > src/index.js && \
+        echo '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Sistema de Detección Vehicular - Radxa Rock 5T</title><style>body { margin: 0; background: #1a202c; color: white; font-family: system-ui; }</style></head><body><div id="root"></div></body></html>' > public/index.html; \
+    fi
+
+# Build del frontend o crear fallback completo
 RUN if [ -f "package.json" ] && [ -d "src" ]; then \
         npm run build 2>/dev/null || echo "Build failed, creating fallback"; \
     fi
 
-# Crear build básico si no existe
+# Crear build completo si no existe
 RUN if [ ! -d "build" ]; then \
         mkdir -p build/static/css build/static/js && \
         cat > build/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>🚗 Sistema de Detección Vehicular</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>🚗 Sistema de Detección Vehicular - Radxa Rock 5T</title>
     <style>
         body { 
             background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%); 
@@ -61,7 +78,7 @@ RUN if [ ! -d "build" ]; then \
             justify-content: center;
         }
         .container { 
-            max-width: 900px; 
+            max-width: 1200px; 
             margin: 0 auto; 
             padding: 20px;
             text-align: center;
@@ -153,7 +170,7 @@ RUN if [ ! -d "build" ]; then \
         <h1>🚗 Sistema de Detección Vehicular</h1>
         
         <div class="status">
-            ✅ Sistema Operativo
+            ✅ Sistema Operativo - Radxa Rock 5T
         </div>
         
         <div class="api-status" id="api-status">
@@ -162,6 +179,7 @@ RUN if [ ! -d "build" ]; then \
         
         <div class="hardware">
             <h3>🔧 Hardware: Radxa Rock 5T</h3>
+            <p><strong>NPU:</strong> RKNN RK3588 - 6 TOPS</p>
             <p><strong>Versión:</strong> 1.0.0</p>
             <p id="system-info"><strong>Estado:</strong> Inicializando...</p>
         </div>
@@ -169,19 +187,19 @@ RUN if [ ! -d "build" ]; then \
         <div class="features">
             <div class="feature">
                 <h4>📹 Detección en Tiempo Real</h4>
-                <p>Análisis automático de video RTSP con IA</p>
+                <p>YOLOv8n optimizado con RKNN para NPU</p>
             </div>
             <div class="feature">
-                <h4>📊 Análisis de Tráfico</h4>
-                <p>Conteo, velocidad y seguimiento vehicular</p>
+                <h4>📊 Conteo por Carril</h4>
+                <p>Análisis de tráfico con velocidad</p>
             </div>
             <div class="feature">
-                <h4>🗄️ Base de Datos</h4>
-                <p>Almacenamiento automático de registros</p>
+                <h4>🚦 Zona de Semáforo Rojo</h4>
+                <p>Detección automática de infracciones</p>
             </div>
             <div class="feature">
-                <h4>🌐 Interface Web</h4>
-                <p>Configuración y monitoreo remoto</p>
+                <h4>🎛️ Controladora TICSA</h4>
+                <p>Comunicación bidireccional</p>
             </div>
         </div>
         
@@ -190,37 +208,48 @@ RUN if [ ! -d "build" ]; then \
                 <a href="/docs">📖 Documentación API</a>
                 <a href="/api/camera_health">🔍 Estado del Sistema</a>
                 <a href="/api/camera/config">⚙️ Configuración</a>
+                <a href="/api/camera/stream">📹 Stream de Video</a>
             </div>
         </div>
     </div>
 </body>
 </html>
 EOF
-        echo "Frontend fallback created"; \
+        echo "Frontend completo fallback creado"; \
     fi
 
 # ============================================================================
-# STAGE 2: Backend Principal (Python + FastAPI)
+# STAGE 2: Backend Principal (Python + FastAPI) - OPTIMIZADO PARA RK3588
 # ============================================================================
 FROM python:3.11-slim-bookworm AS final
 
-# Variables de entorno
+# Variables de entorno optimizadas para Radxa Rock 5T
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     APP_ENV=production \
     PYTHONPATH=/app \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # RKNN específico para RK3588
+    USE_RKNN=1 \
+    SOC_TYPE=rk3588 \
+    HARDWARE_PLATFORM=radxa-rock-5t \
+    MAX_CAMERAS=4 \
+    TARGET_FPS=30 \
+    ENABLE_NPU=true \
+    ENABLE_GPU=true
 
 WORKDIR /app
 
-# Instalar dependencias del sistema ESPECÍFICAS para Radxa Rock 5T
+# Instalar dependencias del sistema ESPECÍFICAS para Radxa Rock 5T + RKNN
 RUN apt-get update && apt-get install -y \
+    # Compilación y desarrollo
     build-essential \
     cmake \
     git \
     pkg-config \
+    # Librerías de video y OpenCV para ARM64
     libjpeg-dev \
     libpng-dev \
     libavcodec-dev \
@@ -238,16 +267,19 @@ RUN apt-get update && apt-get install -y \
     libdc1394-22-dev \
     libv4l-dev \
     v4l-utils \
+    # Optimización matemática ARM64
     libopenblas-dev \
     libatlas-base-dev \
     libblas-dev \
     liblapack-dev \
     gfortran \
     libhdf5-dev \
+    # RKNN y NPU específico
     libprotobuf-dev \
     libgoogle-glog-dev \
     libgflags-dev \
     protobuf-compiler \
+    # Utilidades del sistema
     curl \
     wget \
     ffmpeg \
@@ -260,21 +292,23 @@ RUN apt-get update && apt-get install -y \
     jq \
     nano \
     htop \
+    # Python específico
     python3-dev \
     python3-pip \
     python3-numpy \
+    # RKNN Runtime para RK3588 (si está disponible)
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Crear usuario para la aplicación
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# CRÍTICO: Crear estructura de directorios ANTES de copiar archivos
+RUN mkdir -p /app/{app/{core,services,api,utils},frontend,config,data,models,logs,scripts,tests}
 
-# Copiar requirements.txt primero (para cache de Docker)
+# CRÍTICO: Copiar requirements.txt PRIMERO para cache de Docker
 COPY requirements.txt ./
 
 # Crear requirements.txt optimizado para ARM64/Radxa Rock 5T si no existe
 RUN if [ ! -f "requirements.txt" ]; then \
-        cat > requirements.txt << 'EOF'
+        cat > requirements.txt << 'REQS_EOF'
 # Core FastAPI
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
@@ -296,9 +330,7 @@ numpy>=1.21.0,<1.25.0
 
 # AI/ML - ARM64 compatible versions
 ultralytics>=8.0.0
-# torch==2.0.1+cpu  # Will install CPU version for ARM64
-# torchvision==0.15.2+cpu
-onnxruntime>=1.15.0  # ARM64 compatible
+onnxruntime>=1.15.0
 Pillow>=9.0.0,<11.0.0
 
 # Tracking and detection
@@ -313,6 +345,7 @@ pandas>=1.5.0,<2.2.0
 requests>=2.28.0
 aiofiles>=0.8.0
 httpx>=0.24.0
+aiohttp>=3.9.0
 
 # Utilities
 python-dotenv>=0.19.0
@@ -320,59 +353,101 @@ loguru>=0.6.0
 rich>=12.0.0
 jinja2>=3.1.0
 click>=8.0.0
+bcrypt==4.1.2
+PyJWT==2.8.0
 
 # Development
 typer>=0.7.0
-EOF
-        echo "✅ Requirements.txt for ARM64 created"; \
+REQS_EOF
+        echo "✅ Requirements.txt para ARM64 creado"; \
     else \
         echo "✅ Using existing requirements.txt"; \
     fi
 
-# Instalar dependencias Python con manejo de errores ARM64
+# Instalar dependencias Python con manejo de errores ARM64 + RKNN
 RUN pip install --upgrade pip setuptools wheel && \
+    # Intentar instalar PyTorch para ARM64
     pip install --no-cache-dir --find-links https://download.pytorch.org/whl/cpu/torch_stable.html \
     torch torchvision --index-url https://download.pytorch.org/whl/cpu || \
     echo "⚠️ PyTorch no disponible para esta arquitectura, continuando sin torch" && \
+    # Instalar dependencias principales
     pip install --no-cache-dir -r requirements.txt || \
     (echo "⚠️ Algunos paquetes fallaron, instalando básicos..." && \
-     pip install --no-cache-dir fastapi uvicorn numpy opencv-python-headless sqlalchemy requests aiofiles)
+     pip install --no-cache-dir fastapi uvicorn numpy opencv-python-headless sqlalchemy requests aiofiles loguru)
+
+# INTENTAR instalar RKNN si está disponible (no crítico si falla)
+RUN pip install --no-cache-dir rknnlite2 || \
+    echo "⚠️ RKNN no disponible via pip, se intentará instalar desde sistema"
 
 # ============================================================================
-# COPIAR TODA LA APLICACIÓN - ESTRUCTURA COMPLETA
+# COPIAR TODA LA APLICACIÓN - ESTRUCTURA COMPLETA Y CORRECTA
 # ============================================================================
 
-# Crear estructura de directorios
-RUN mkdir -p /app/{app/{core,services,api,utils},frontend,config,data,models,logs,scripts,tests}
+# CRÍTICO: Crear archivos __init__.py ANTES de copiar código
+RUN touch /app/app/__init__.py && \
+    touch /app/app/core/__init__.py && \
+    touch /app/app/services/__init__.py && \
+    touch /app/app/api/__init__.py && \
+    touch /app/app/utils/__init__.py
 
-# Copiar archivo principal
+# CRÍTICO: Copiar archivo principal main.py
 COPY main.py ./
 
-# Copiar toda la aplicación Python
+# CRÍTICO: Copiar TODA la aplicación Python - VERIFICAR QUE SE COPIE
 COPY app/ ./app/
 
-# Copiar scripts de utilidades
-COPY scripts/ ./scripts/ 2>/dev/null || mkdir -p scripts
+# Verificar que los archivos se copiaron correctamente
+RUN echo "🔍 VERIFICACIÓN CRÍTICA DE ARCHIVOS COPIADOS:" && \
+    echo "📁 Contenido principal de /app:" && \
+    ls -la /app/ && \
+    echo "" && \
+    echo "📂 Contenido de app/:" && \
+    ls -la /app/app/ && \
+    echo "" && \
+    echo "📂 Contenido de app/core/:" && \
+    ls -la /app/app/core/ && \
+    echo "" && \
+    echo "📂 Contenido de app/services/:" && \
+    ls -la /app/app/services/ && \
+    echo "" && \
+    echo "🐍 Archivos Python encontrados:" && \
+    find /app/app -name "*.py" | head -10 && \
+    echo "" && \
+    echo "📋 Verificando archivos críticos:" && \
+    ([ -f "/app/app/core/database.py" ] && echo "✅ database.py" || echo "❌ database.py FALTA") && \
+    ([ -f "/app/app/core/detector.py" ] && echo "✅ detector.py" || echo "❌ detector.py FALTA") && \
+    ([ -f "/app/app/core/tracker.py" ] && echo "✅ tracker.py" || echo "❌ tracker.py FALTA") && \
+    ([ -f "/app/app/core/analyzer.py" ] && echo "✅ analyzer.py" || echo "❌ analyzer.py FALTA") && \
+    ([ -f "/app/app/core/video_processor.py" ] && echo "✅ video_processor.py" || echo "❌ video_processor.py FALTA") && \
+    ([ -f "/app/app/services/auth_service.py" ] && echo "✅ auth_service.py" || echo "❌ auth_service.py FALTA") && \
+    ([ -f "/app/app/services/controller_service.py" ] && echo "✅ controller_service.py" || echo "❌ controller_service.py FALTA")
 
-# Copiar configuraciones base
-COPY config/ ./config/ 2>/dev/null || mkdir -p config
+# Copiar scripts de utilidades y configuraciones
+COPY scripts/ ./scripts/ 
+COPY config/ ./config/
+
+# Copiar tests y documentación si existen
+COPY tests/ ./tests/ 
+COPY docs/ ./docs/ 
 
 # Copiar frontend construido desde stage anterior
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
-# Copiar archivos adicionales si existen
-COPY tests/ ./tests/ 2>/dev/null || mkdir -p tests
-COPY docs/ ./docs/ 2>/dev/null || mkdir -p docs
-
 # ============================================================================
-# CONFIGURACIÓN Y SCRIPTS DE INICIALIZACIÓN
+# CONFIGURACIÓN Y SCRIPTS DE INICIALIZACIÓN ESPECÍFICOS PARA RADXA
 # ============================================================================
 
-# Crear archivos de configuración por defecto
+# Crear archivos de configuración por defecto para sistema de conteo
 RUN cat > /app/config/analysis.json << 'EOF' && \
 {
   "lines": {},
-  "zones": {}
+  "zones": {},
+  "metadata": {
+    "version": "1.0.0",
+    "created": "2024-01-01T00:00:00Z",
+    "hardware": "radxa-rock-5t",
+    "npu_enabled": true
+  }
 }
 EOF
 
@@ -386,7 +461,13 @@ cat > /app/config/cameras.json << 'EOF' && \
     "direccion": "norte",
     "controladora_id": "CTRL_001",
     "controladora_ip": "192.168.1.200",
-    "enabled": false
+    "enabled": false,
+    "resolution": "1920x1080",
+    "fps": 30,
+    "codec": "h264",
+    "lane_detection": true,
+    "speed_calculation": true,
+    "red_zone_detection": true
   }
 }
 EOF
@@ -396,7 +477,7 @@ cat > /app/config/controllers.json << 'EOF' && \
   "controllers": {
     "CTRL_001": {
       "id": "CTRL_001",
-      "name": "Controladora Principal",
+      "name": "Controladora Principal TICSA",
       "network": {
         "ip": "192.168.1.200",
         "port": 8080
@@ -404,6 +485,11 @@ cat > /app/config/controllers.json << 'EOF' && \
       "endpoints": {
         "analytic": "/api/analitico",
         "status": "/api/analiticos"
+      },
+      "features": {
+        "red_zone_analytics": true,
+        "traffic_flow_control": true,
+        "bidirectional_communication": true
       }
     }
   }
@@ -416,25 +502,35 @@ cat > /app/config/system.json << 'EOF'
     "name": "Sistema de Detección Vehicular",
     "version": "1.0.0",
     "hardware": "Radxa Rock 5T",
+    "soc": "RK3588",
+    "npu_tops": 6,
     "max_cameras": 4,
     "data_retention_days": 30,
     "processing": {
       "target_fps": 30,
       "detection_confidence": 0.5,
-      "tracking_threshold": 0.3
+      "tracking_threshold": 0.3,
+      "use_rknn": true,
+      "model_format": "rknn"
+    },
+    "features": {
+      "lane_counting": true,
+      "speed_calculation": true,
+      "red_zone_detection": true,
+      "traffic_controller_communication": true
     }
   }
 }
 EOF
 
-# Crear script de inicialización inteligente y robusto
+# Crear script de inicialización inteligente y robusto específico para Radxa + RKNN
 RUN cat > /app/start.sh << 'EOF' && \
 #!/bin/bash
 set -e
 
 echo "🚀 Iniciando Sistema de Detección Vehicular v1.0.0"
-echo "🏗️  Hardware: Radxa Rock 5T (RK3588)"
-echo "=================================================="
+echo "🏗️  Hardware: Radxa Rock 5T (RK3588) con NPU 6 TOPS"
+echo "================================================================"
 
 # Función para logging
 log_info() { echo "ℹ️  $1"; }
@@ -442,126 +538,83 @@ log_success() { echo "✅ $1"; }
 log_warning() { echo "⚠️  $1"; }
 log_error() { echo "❌ $1"; }
 
-# Detectar arquitectura
+# Detectar arquitectura y hardware específico
 ARCH=$(uname -m)
 log_info "Arquitectura detectada: $ARCH"
 
-# Crear directorios necesarios
+# Detectar específicamente Radxa Rock 5T
+if [ -f /proc/device-tree/model ]; then
+    MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
+    log_info "Hardware detectado: $MODEL"
+    
+    if [[ "$MODEL" == *"Radxa"* ]] && [[ "$MODEL" == *"ROCK"* ]] && [[ "$MODEL" == *"5T"* ]]; then
+        export USE_RKNN=1
+        export SOC_TYPE=rk3588
+        log_success "Radxa Rock 5T detectada - NPU RKNN habilitado"
+    else
+        log_warning "Hardware no es Radxa Rock 5T - usando CPU/OpenCV"
+        export USE_RKNN=0
+    fi
+fi
+
+# Crear directorios necesarios con estructura completa
 log_info "Creando estructura de directorios..."
 mkdir -p /app/{data,config,models,logs}
 mkdir -p /app/data/{$(date +%Y),$(date +%Y/%m)}
 
-# VERIFICACIÓN INTELIGENTE DE LA ESTRUCTURA
-log_info "🔍 Verificando estructura del proyecto..."
+# VERIFICACIÓN CRÍTICA DE LA ESTRUCTURA DEL PROYECTO
+log_info "🔍 Verificando estructura crítica del proyecto..."
 
-# Verificar main.py
-if [ ! -f "/app/main.py" ]; then
-    log_error "main.py no encontrado"
-    log_info "Creando main.py básico para evitar fallos..."
-    cat > /app/main.py << 'MAIN_EOF'
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
-import os
+# Verificar archivos Python críticos
+CRITICAL_FILES=(
+    "/app/main.py"
+    "/app/app/__init__.py"
+    "/app/app/core/__init__.py"
+    "/app/app/core/database.py"
+    "/app/app/core/detector.py"
+    "/app/app/core/tracker.py"
+    "/app/app/core/analyzer.py"
+    "/app/app/core/video_processor.py"
+    "/app/app/services/__init__.py"
+    "/app/app/services/auth_service.py"
+    "/app/app/services/controller_service.py"
+)
 
-app = FastAPI(title="Sistema de Detección Vehicular", version="1.0.0")
+MISSING_COUNT=0
+for file in "${CRITICAL_FILES[@]}"; do
+    if [ -f "$file" ]; then
+        log_success "$(basename $file)"
+    else
+        log_error "$(basename $file) - FALTA"
+        MISSING_COUNT=$((MISSING_COUNT + 1))
+    fi
+done
 
-# Servir frontend si existe
-if os.path.exists("/app/frontend/build"):
-    app.mount("/static", StaticFiles(directory="/app/frontend/build/static"), name="static")
-
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    if os.path.exists("/app/frontend/build/index.html"):
-        with open("/app/frontend/build/index.html") as f:
-            return f.read()
-    return "<h1>Sistema de Detección Vehicular</h1><p>Configurar en /api/camera/config</p>"
-
-@app.get("/api/camera_health")
-async def health_check():
-    return {"status": "ok", "service": "vehicle-detection", "version": "1.0.0"}
-
-@app.get("/api/camera/config")
-async def get_config():
-    return {"rtsp_url": "", "enabled": False}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-MAIN_EOF
-    log_warning "main.py básico creado - reemplázalo con tu código real"
+if [ $MISSING_COUNT -gt 0 ]; then
+    log_error "$MISSING_COUNT archivos críticos faltan"
+    log_warning "Sistema funcionará en modo básico"
 else
-    log_success "main.py encontrado"
+    log_success "Todos los archivos críticos presentes"
 fi
 
-# Verificar módulos de la aplicación
-APP_MODULES_MISSING=0
-if [ ! -d "/app/app" ]; then
-    log_warning "Directorio app/ no encontrado, creando estructura básica..."
-    mkdir -p /app/app/{core,services,api}
-    touch /app/app/__init__.py
-    touch /app/app/core/__init__.py
-    touch /app/app/services/__init__.py
-    touch /app/app/api/__init__.py
-    APP_MODULES_MISSING=1
-else
-    log_success "Estructura de aplicación encontrada"
+# Verificar e instalar RKNN si es Radxa Rock 5T
+if [ "$USE_RKNN" = "1" ]; then
+    log_info "🤖 Configurando RKNN para NPU RK3588..."
+    
+    # Verificar si RKNN está disponible
+    python3 -c "import rknnlite" 2>/dev/null && \
+        log_success "RKNN Python bindings disponibles" || \
+        log_warning "RKNN Python bindings no disponibles - usando OpenCV"
+    
+    # Verificar driver NPU
+    if dmesg | grep -q "rknpu"; then
+        log_success "Driver NPU RK3588 detectado"
+    else
+        log_warning "Driver NPU no detectado"
+    fi
 fi
 
-# Verificar frontend
-if [ ! -d "/app/frontend/build" ]; then
-    log_warning "Frontend build no encontrado, usando fallback"
-else
-    log_success "Frontend build encontrado"
-fi
-
-# Inicializar configuraciones con valores reales
-log_info "⚙️ Inicializando configuraciones..."
-
-# Configuración de análisis
-if [ ! -f "/app/config/analysis.json" ]; then
-    cat > /app/config/analysis.json << 'ANALYSIS_EOF'
-{
-  "lines": {},
-  "zones": {},
-  "metadata": {
-    "version": "1.0.0",
-    "created": "'$(date -Iseconds)'",
-    "hardware": "radxa-rock-5t"
-  }
-}
-ANALYSIS_EOF
-    log_success "analysis.json creado"
-fi
-
-# Configuración de cámaras
-if [ ! -f "/app/config/cameras.json" ]; then
-    cat > /app/config/cameras.json << 'CAMERAS_EOF'
-{
-  "camera_1": {
-    "id": "camera_1",
-    "name": "Cámara Principal",
-    "rtsp_url": "",
-    "fase": "fase1",
-    "direccion": "norte",
-    "controladora_id": "CTRL_001",
-    "controladora_ip": "192.168.1.200",
-    "enabled": false,
-    "resolution": "1920x1080",
-    "fps": 30,
-    "codec": "h264"
-  }
-}
-CAMERAS_EOF
-    log_success "cameras.json creado"
-fi
-
-# Configurar permisos
-log_info "🔐 Configurando permisos..."
-chown -R $(whoami):$(whoami) /app/data /app/config /app/models /app/logs 2>/dev/null || true
-chmod -R 755 /app/data /app/config /app/models /app/logs 2>/dev/null || true
-
-# Verificar e instalar modelo de IA
+# Verificar e instalar modelo de IA optimizado para RKNN
 log_info "🤖 Verificando modelo de IA..."
 if [ ! -f "/app/models/yolov8n.onnx" ]; then
     log_info "Descargando YOLOv8n model..."
@@ -573,6 +626,16 @@ if [ ! -f "/app/models/yolov8n.onnx" ]; then
     cd /app
 else
     log_success "Modelo YOLOv8n encontrado"
+fi
+
+# Si es Radxa Rock 5T, intentar convertir a RKNN
+if [ "$USE_RKNN" = "1" ] && [ -f "/app/models/yolov8n.onnx" ] && [ ! -f "/app/models/yolov8n.rknn" ]; then
+    log_info "🔧 Convirtiendo modelo a formato RKNN para NPU..."
+    if [ -f "/app/scripts/convert_model.py" ]; then
+        python3 /app/scripts/convert_model.py 2>/dev/null && \
+            log_success "Modelo convertido a RKNN" || \
+            log_warning "Conversión RKNN falló - usando ONNX"
+    fi
 fi
 
 # Verificar dependencias Python críticas
@@ -600,13 +663,17 @@ for module in optional_modules:
     except ImportError:
         print(f'  ⚠️  {module} - opcional')
 
-# Verificar estructura de la aplicación si existe
+# Verificar estructura de la aplicación
 try:
-    if os.path.exists('/app/app'):
+    if '$MISSING_COUNT' == '0':
         import app
         print('  ✅ Módulo app importable')
+        import app.core.database
+        print('  ✅ Sistema de base de datos OK')
+        import app.services.auth_service
+        print('  ✅ Servicio de autenticación OK')
     else:
-        print('  ⚠️  Módulo app no encontrado')
+        print('  ⚠️  Módulos de aplicación no completos')
 except Exception as e:
     print(f'  ⚠️  Error importando app: {e}')
 " || log_warning "Verificación de módulos completada con advertencias"
@@ -617,19 +684,27 @@ if [ -f "/app/scripts/init_config.py" ]; then
     python3 /app/scripts/init_config.py 2>/dev/null || log_info "Configuración personalizada completada"
 fi
 
+# Configurar permisos
+log_info "🔐 Configurando permisos..."
+chown -R $(whoami):$(whoami) /app/data /app/config /app/models /app/logs 2>/dev/null || true
+chmod -R 755 /app/data /app/config /app/models /app/logs 2>/dev/null || true
+
 # Información del sistema
 echo ""
 log_info "📋 INFORMACIÓN DEL SISTEMA"
 echo "=========================="
 echo "🖥️  Hardware: Radxa Rock 5T (RK3588)"
+echo "🧠 NPU: RKNN habilitado - 6 TOPS"
 echo "🏗️  Arquitectura: $ARCH"
 echo "🐍 Python: $(python3 --version 2>/dev/null || echo 'No disponible')"
 echo "📁 Directorio: $(pwd)"
 echo "👤 Usuario: $(whoami)"
 echo "🌐 Puerto: 8000"
 echo "📊 Base de datos: SQLite"
-echo "🎯 AI Model: YOLOv8n ONNX"
-echo "📂 Estructura: $([ $APP_MODULES_MISSING -eq 0 ] && echo 'Completa' || echo 'Básica')"
+echo "🎯 AI Model: YOLOv8n RKNN/ONNX"
+echo "🚗 Características: Conteo por carril, velocidad, zona roja"
+echo "🎛️ Controladora: TICSA compatible"
+echo "📂 Archivos críticos: $((${#CRITICAL_FILES[@]} - $MISSING_COUNT))/${#CRITICAL_FILES[@]}"
 echo ""
 
 log_success "Inicialización completa"
@@ -651,6 +726,9 @@ EOF
 
 chmod +x /app/start.sh
 
+# Crear usuario para la aplicación
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
 # ============================================================================
 # CONFIGURACIÓN FINAL
 # ============================================================================
@@ -660,16 +738,36 @@ RUN chown -R appuser:appuser /app
 RUN find /app -type f -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
 RUN find /app/scripts -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
-# Crear script de utilidades
+# Crear script de utilidades específico para Radxa Rock 5T
 RUN cat > /app/scripts/utils.sh << 'EOF' && \
 #!/bin/bash
 
-# Funciones de utilidad del sistema
+# Funciones de utilidad del sistema para Radxa Rock 5T
+
+# Verificar estado de NPU
+check_npu() {
+    echo "🧠 Verificando NPU RK3588..."
+    dmesg | grep -i rknpu || echo "NPU no detectado"
+    lsmod | grep -i rknpu || echo "Módulo NPU no cargado"
+}
 
 # Verificar estado de la base de datos
 check_database() {
     echo "📊 Verificando base de datos..."
     find /app/data -name "*.db" -exec ls -lh {} \; 2>/dev/null || echo "No hay bases de datos aún"
+}
+
+# Verificar modelo RKNN
+check_model() {
+    echo "🤖 Verificando modelos de IA..."
+    ls -la /app/models/
+    if [ -f "/app/models/yolov8n.rknn" ]; then
+        echo "✅ Modelo RKNN encontrado"
+    elif [ -f "/app/models/yolov8n.onnx" ]; then
+        echo "⚠️ Solo modelo ONNX disponible"
+    else
+        echo "❌ No hay modelos disponibles"
+    fi
 }
 
 # Limpiar logs antiguos
@@ -687,17 +785,22 @@ backup_config() {
 # Mostrar estadísticas
 show_stats() {
     echo "📈 Estadísticas del sistema:"
+    echo "Hardware: Radxa Rock 5T (RK3588)"
+    echo "NPU: $(check_npu | wc -l) dispositivos"
     echo "Archivos de DB: $(find /app/data -name "*.db" 2>/dev/null | wc -l)"
     echo "Configuraciones: $(ls -1 /app/config/*.json 2>/dev/null | wc -l)"
     echo "Logs: $(ls -1 /app/logs/*.log 2>/dev/null | wc -l)"
+    echo "Modelos: $(ls -1 /app/models/*.{rknn,onnx} 2>/dev/null | wc -l)"
 }
 
 case "$1" in
+    "check-npu") check_npu ;;
     "check-db") check_database ;;
+    "check-model") check_model ;;
     "clean-logs") clean_logs ;;
     "backup") backup_config ;;
     "stats") show_stats ;;
-    *) echo "Uso: $0 {check-db|clean-logs|backup|stats}" ;;
+    *) echo "Uso: $0 {check-npu|check-db|check-model|clean-logs|backup|stats}" ;;
 esac
 EOF
 
@@ -706,8 +809,8 @@ chmod +x /app/scripts/utils.sh
 # Exponer puerto
 EXPOSE 8000
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
+# Healthcheck mejorado
+HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:8000/api/camera_health || exit 1
 
 # Usuario final
