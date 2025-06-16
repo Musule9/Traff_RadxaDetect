@@ -41,9 +41,14 @@ export const apiService = {
     return response.data;
   },
 
-  // Cámara
+  // Cámara - COMPLETO
   async getCameraStatus() {
     const response = await api.get('/api/camera/status');
+    return response.data;
+  },
+
+  async getCameraConfig() {
+    const response = await api.get('/api/camera/config');
     return response.data;
   },
 
@@ -72,7 +77,17 @@ export const apiService = {
     return response.data;
   },
 
-  // Análisis
+  // Análisis - COMPLETO
+  async getLines() {
+    const response = await api.get('/api/analysis/lines');
+    return response.data;
+  },
+
+  async getZones() {
+    const response = await api.get('/api/analysis/zones');
+    return response.data;
+  },
+
   async addLine(line) {
     const response = await api.post('/api/analysis/lines', line);
     return response.data;
@@ -83,8 +98,23 @@ export const apiService = {
     return response.data;
   },
 
+  async deleteLine(lineId) {
+    const response = await api.delete(`/api/analysis/lines/${lineId}`);
+    return response.data;
+  },
+
+  async deleteZone(zoneId) {
+    const response = await api.delete(`/api/analysis/zones/${zoneId}`);
+    return response.data;
+  },
+
+  async clearAnalysis() {
+    const response = await api.post('/api/analysis/clear');
+    return response.data;
+  },
+
   async getCameraTracks(cameraId) {
-    // Simular datos hasta que esté implementado
+    // Simulado hasta que esté implementado
     return {
       total_tracks: Math.floor(Math.random() * 5),
       tracks: [],
@@ -119,5 +149,4 @@ export const apiService = {
     return response.data;
   }
 };
-
 export default api;

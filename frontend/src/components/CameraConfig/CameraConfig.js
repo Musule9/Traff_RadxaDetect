@@ -21,40 +21,72 @@ const CameraConfig = () => {
   });
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
-
+  
   useEffect(() => {
-    loadCameraConfig();
+      loadCameraConfig();
   }, []);
 
   const loadCameraConfig = async () => {
-    try {
-      const status = await apiService.getCameraStatus();
-      setConfig({
-        rtsp_url: status.rtsp_url || '',
-        fase: status.fase || 'fase1',
-        direccion: status.direccion || 'norte',
-        controladora_id: 'CTRL_001',
-        controladora_ip: '192.168.1.200'
-      });
-    } catch (error) {
-      console.error('Error cargando configuración:', error);
-    }
+      setLoading(true);
+      try {
+          // Cargar configuración desde el endpoint GET específico
+          const response = await apiService.getCameraConfig();
+          
+          setConfig({
+              rtsp_url: response.rtsp_url || '',
+              fase: response.fase || 'fase1',
+              direccion: response.direccion || 'norte',
+              controladora_id: response.controladora_id || 'CTRL_001',
+              controladora_ip: response.controladora_ip || '192.168.1.200'
+          });
+          
+          logger.info('Configuración de cámara cargada:', response);
+          
+      } catch (error) {
+          console.error('Error cargando configuración de cámara:', error);
+          
+          // Fallback: intentar cargar desde status
+          try {
+              const status = await apiService.getCameraStatus();
+              setConfig({
+                  rtsp_url: status.rtsp_url || '',
+                  fase: status.fase || 'fase1',
+                  direccion: status.direccion || 'norte',
+                  controladora_id: 'CTRL_001',
+                  controladora_ip: '192.168.1.200'
+              });
+          } catch (statusError) {
+              console.error('Error cargando status de cámara:', statusError);
+              toast.error('Error cargando configuración de cámara');
+          }
+      } finally {
+          setLoading(false);
+      }
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+      e.preventDefault();
+      setLoading(true);
 
-    try {
-      await updateCameraConfig('camera_1', config);
-      toast.success('Configuración guardada exitosamente');
-    } catch (error) {
-      toast.error('Error guardando configuración');
-    } finally {
-      setLoading(false);
-    }
+      try {
+          const response = await apiService.updateCameraConfig(config);
+          toast.success('Configuración guardada exitosamente');
+          
+          // Recargar estado del sistema
+          if (updateCameraConfig) {
+              await updateCameraConfig('camera_1', config);
+          }
+          
+          logger.info('Configuración actualizada:', response);
+          
+      } catch (error) {
+          console.error('Error guardando configuración:', error);
+          toast.error('Error guardando configuración');
+      } finally {
+          setLoading(false);
+      }
   };
-
+  
   const testConnection = async () => {
     if (!config.rtsp_url) {
       toast.error('Ingrese una URL RTSP válida');

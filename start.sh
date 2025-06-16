@@ -20,6 +20,61 @@ fi
 # Crear directorios necesarios
 mkdir -p /app/data /app/config /app/models /app/logs
 
+# Crear archivos de configuración por defecto si no existen
+echo "📁 Verificando archivos de configuración..."
+
+if [ ! -f "/app/config/analysis.json" ]; then
+    echo "📝 Creando analysis.json por defecto..."
+    cat > /app/config/analysis.json << 'EOF'
+{
+  "lines": {},
+  "zones": {}
+}
+EOF
+fi
+
+if [ ! -f "/app/config/cameras.json" ]; then
+    echo "📝 Creando cameras.json por defecto..."
+    cat > /app/config/cameras.json << 'EOF'
+{
+  "camera_1": {
+    "id": "camera_1",
+    "name": "Cámara Principal",
+    "rtsp_url": "",
+    "fase": "fase1",
+    "direccion": "norte",
+    "controladora_id": "CTRL_001",
+    "controladora_ip": "192.168.1.200",
+    "enabled": false
+  }
+}
+EOF
+fi
+
+if [ ! -f "/app/config/controllers.json" ]; then
+    echo "📝 Creando controllers.json por defecto..."
+    cat > /app/config/controllers.json << 'EOF'
+{
+  "controllers": {
+    "CTRL_001": {
+      "id": "CTRL_001",
+      "name": "Controladora Principal",
+      "network": {
+        "ip": "192.168.1.200",
+        "port": 8080
+      },
+      "endpoints": {
+        "analytic": "/api/analitico",
+        "status": "/api/analiticos"
+      }
+    }
+  }
+}
+EOF
+fi
+
+echo "✅ Archivos de configuración verificados"
+
 # Configuración de permisos
 chown -R $(whoami) /app/data /app/config /app/models /app/logs 2>/dev/null || true
 

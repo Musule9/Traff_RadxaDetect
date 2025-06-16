@@ -157,18 +157,19 @@ async def lifespan(app: FastAPI):
     try:
         logger.info("🚀 Inicializando servicios...")
         
+        # FORZAR INICIALIZACIÓN DE BASE DE DATOS
+        db_manager = DatabaseManager()
+        await db_manager.init_daily_database()
+        logger.info("✅ Base de datos inicializada")
+        
+        # Autenticación
+        auth_service = AuthService()
+        
+        # Servicio de controladora
+        controller_service = ControllerService()
+        
+        # SOLO inicializar video processor si los módulos están disponibles
         if MODULES_AVAILABLE:
-            # Base de datos
-            db_manager = DatabaseManager()
-            await db_manager.init_daily_database()
-            
-            # Autenticación
-            auth_service = AuthService()
-            
-            # Servicio de controladora
-            controller_service = ControllerService()
-            
-            # Procesador de video
             camera_config = load_camera_config()
             system_config = load_system_config()
             
@@ -181,15 +182,13 @@ async def lifespan(app: FastAPI):
             
             await video_processor.initialize()
             
-            # Iniciar procesamiento solo si hay configuración de cámara
             if camera_config.get("rtsp_url"):
                 video_processor.start_processing()
                 logger.info("✅ Procesamiento de video iniciado")
-            else:
-                logger.info("⚠️ No hay configuración de cámara - procesamiento no iniciado")
-            
-            # Tareas en background
-            asyncio.create_task(daily_cleanup_task())
+        
+        # Tareas en background SIEMPRE
+        asyncio.create_task(daily_cleanup_task())
+        if MODULES_AVAILABLE:
             asyncio.create_task(traffic_light_update_task())
         
         logger.info("✅ Servicios inicializados correctamente")
@@ -205,7 +204,6 @@ async def lifespan(app: FastAPI):
         if controller_service:
             await controller_service.close()
         logger.info("🔽 Servicios finalizados")
-
 # Crear aplicación FastAPI
 app = FastAPI(
     title="Sistema de Detección Vehicular",
@@ -302,36 +300,110 @@ async def get_camera_status():
         "direccion": video_processor.camera_config.get("direccion", "")
     }
 
+# ============================================================================
+# CONFIGURACIÓN DE CÁMARA - COMPLETA
+# ============================================================================
+
+@app.get("/api/camera/config")
+async def get_camera_config():
+    """Obtener configuración actual de cámara"""
+    try:
+        # Asegurar que el directorio existe
+        os.makedirs("/app/config", exist_ok=True)
+        
+        # Intentar cargar configuración existente
+        try:
+            with open("/app/config/cameras.json", "r") as f:
+                cameras = json.load(f)
+        except:
+            # Crear configuración por defecto si no existe
+            cameras = {
+                "camera_1": {
+                    "id": "camera_1",
+                    "name": "Cámara Principal",
+                    "rtsp_url": "",
+                    "fase": "fase1",
+                    "direccion": "norte",
+                    "controladora_id": "CTRL_001",
+                    "controladora_ip": "192.168.1.200",
+                    "enabled": False
+                }
+            }
+            with open("/app/config/cameras.json", "w") as f:
+                json.dump(cameras, f, indent=2)
+        
+        # Retornar la primera cámara habilitada o la primera disponible
+        for camera in cameras.values():
+            if camera.get("enabled", False):
+                return camera
+        
+        # Si no hay cámara habilitada, retornar la primera
+        if cameras:
+            return list(cameras.values())[0]
+        
+        # Configuración por defecto como último recurso
+        return {
+            "rtsp_url": "",
+            "fase": "fase1",
+            "direccion": "norte",
+            "controladora_id": "CTRL_001",
+            "controladora_ip": "192.168.1.200",
+            "enabled": False
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo configuración de cámara: {e}")
+        return {
+            "rtsp_url": "",
+            "fase": "fase1",
+            "direccion": "norte", 
+            "controladora_id": "CTRL_001",
+            "controladora_ip": "192.168.1.200",
+            "enabled": False
+        }
+
 @app.post("/api/camera/config")
 async def update_camera_config(config: CameraConfig):
     """Actualizar configuración de cámara"""
     try:
         os.makedirs("/app/config", exist_ok=True)
         
+        # Cargar configuración existente o crear nueva
         try:
             with open("/app/config/cameras.json", "r") as f:
                 cameras = json.load(f)
         except:
-            cameras = {"camera_1": {"id": "camera_1", "name": "Cámara Principal", "enabled": True}}
+            cameras = {}
         
-        camera_key = list(cameras.keys())[0] if cameras else "camera_1"
+        # Asegurar que existe al menos camera_1
+        if not cameras:
+            cameras = {"camera_1": {"id": "camera_1", "name": "Cámara Principal"}}
+        
+        # Actualizar la primera cámara disponible
+        camera_key = list(cameras.keys())[0]
         cameras[camera_key].update(config.dict())
         cameras[camera_key]["enabled"] = True
         
+        # Guardar configuración
         with open("/app/config/cameras.json", "w") as f:
             json.dump(cameras, f, indent=2)
+        
+        logger.info(f"Configuración de cámara actualizada: {config.dict()}")
         
         # Reiniciar procesador si está ejecutándose
         global video_processor
         if video_processor and video_processor.is_running:
+            logger.info("Reiniciando procesador de video con nueva configuración...")
             video_processor.stop_processing()
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
         
         if video_processor:
             video_processor.camera_config = config.dict()
-            video_processor.start_processing()
+            if config.rtsp_url:  # Solo iniciar si hay URL RTSP
+                video_processor.start_processing()
+                logger.info("Procesador de video reiniciado exitosamente")
         
-        return {"message": "Configuración actualizada exitosamente"}
+        return {"message": "Configuración actualizada exitosamente", "config": config.dict()}
         
     except Exception as e:
         logger.error(f"Error actualizando configuración de cámara: {e}")
@@ -571,6 +643,124 @@ async def receive_analytic_confirmation(request: Request):
         logger.error(f"Error procesando confirmación: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# AGREGAR estos endpoints después de los existentes:
+
+@app.get("/api/analysis/lines")
+async def get_lines():
+    """Obtener todas las líneas de análisis configuradas"""
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        
+        try:
+            with open("/app/config/analysis.json", "r") as f:
+                analysis = json.load(f)
+        except:
+            # Crear archivo por defecto si no existe
+            analysis = {"lines": {}, "zones": {}}
+            with open("/app/config/analysis.json", "w") as f:
+                json.dump(analysis, f, indent=2)
+        
+        return {"lines": analysis.get("lines", {})}
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo líneas: {e}")
+        return {"lines": {}}
+
+@app.get("/api/analysis/zones")
+async def get_zones():
+    """Obtener todas las zonas de análisis configuradas"""
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        
+        try:
+            with open("/app/config/analysis.json", "r") as f:
+                analysis = json.load(f)
+        except:
+            # Crear archivo por defecto si no existe
+            analysis = {"lines": {}, "zones": {}}
+            with open("/app/config/analysis.json", "w") as f:
+                json.dump(analysis, f, indent=2)
+        
+        return {"zones": analysis.get("zones", {})}
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo zonas: {e}")
+        return {"zones": {}}
+
+@app.delete("/api/analysis/lines/{line_id}")
+async def delete_line(line_id: str):
+    """Eliminar línea de análisis"""
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        
+        try:
+            with open("/app/config/analysis.json", "r") as f:
+                analysis = json.load(f)
+        except:
+            analysis = {"lines": {}, "zones": {}}
+        
+        if line_id in analysis.get("lines", {}):
+            del analysis["lines"][line_id]
+            
+            with open("/app/config/analysis.json", "w") as f:
+                json.dump(analysis, f, indent=2)
+            
+            logger.info(f"Línea eliminada: {line_id}")
+            return {"message": "Línea eliminada exitosamente"}
+        else:
+            raise HTTPException(status_code=404, detail="Línea no encontrada")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminando línea: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/analysis/zones/{zone_id}")
+async def delete_zone(zone_id: str):
+    """Eliminar zona de análisis"""
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        
+        try:
+            with open("/app/config/analysis.json", "r") as f:
+                analysis = json.load(f)
+        except:
+            analysis = {"lines": {}, "zones": {}}
+        
+        if zone_id in analysis.get("zones", {}):
+            del analysis["zones"][zone_id]
+            
+            with open("/app/config/analysis.json", "w") as f:
+                json.dump(analysis, f, indent=2)
+            
+            logger.info(f"Zona eliminada: {zone_id}")
+            return {"message": "Zona eliminada exitosamente"}
+        else:
+            raise HTTPException(status_code=404, detail="Zona no encontrada")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminando zona: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/analysis/clear")
+async def clear_analysis():
+    """Limpiar todas las líneas y zonas"""
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        
+        analysis = {"lines": {}, "zones": {}}
+        with open("/app/config/analysis.json", "w") as f:
+            json.dump(analysis, f, indent=2)
+        
+        logger.info("Configuración de análisis limpiada")
+        return {"message": "Todas las líneas y zonas eliminadas"}
+        
+    except Exception as e:
+        logger.error(f"Error limpiando análisis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 # ============================================================================
 # TAREAS EN BACKGROUND
 # ============================================================================

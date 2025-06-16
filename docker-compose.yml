@@ -1,53 +1,153 @@
+# ============================================================================
+# DOCKER COMPOSE - SISTEMA DE DETECCIÓN VEHICULAR
+# ============================================================================
 version: '3.8'
-
-networks:
-  vehicle_net:
-    driver: bridge
 
 services:
   vehicle-detection:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    
     image: vehicle-detection:latest
     container_name: vehicle-detection-prod
-    restart: unless-stopped
+    hostname: vehicle-detection-system
     
-    networks:
-      - vehicle_net
+    restart: unless-stopped
     
     ports:
       - "8000:8000"
+      - "8001:8001"  # Puerto adicional para desarrollo
     
     environment:
+      # Configuración de la aplicación
       - APP_ENV=production
       - LOG_LEVEL=info
-      - MAX_CAMERAS=1
-      - DATA_RETENTION_DAYS=30
-      - USE_RKNN=1
+      - DEBUG=false
+      
+      # Hardware y procesamiento específico Radxa Rock 5T
+      - HARDWARE_PLATFORM=radxa-rock-5t
+      - SOC_TYPE=rk3588
+      - MAX_CAMERAS=4
       - TARGET_FPS=30
+      - USE_RKNN=1
+      - USE_NPU=true
+      - ENABLE_GPU=true
+      - OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;udp
+      
+      # Base de datos y almacenamiento
+      - DATA_RETENTION_DAYS=30
+      - DB_PATH=/app/data
+      - CONFIG_PATH=/app/config
+      - AUTO_CREATE_DIRS=true
+      
+      # Python y dependencias
       - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PIP_NO_CACHE_DIR=1
+      
+      # Configuración de red y timeouts
+      - RTSP_TIMEOUT=30
+      - API_TIMEOUT=60
+      - STREAM_BUFFER_SIZE=1024
+      
+      # Timezone y localización
+      - TZ=America/Mexico_City
+      - LANG=es_MX.UTF-8
+      - LC_ALL=es_MX.UTF-8
+      
+      # Configuración específica ARM64
+      - ARCH=aarch64
+      - PLATFORM=linux/arm64
+      - ENABLE_ARM_OPTIMIZATIONS=true
     
     volumes:
-      - ./data:/app/data
-      - ./config:/app/config
-      - ./models:/app/models
-      - ./logs:/app/logs
+      # SOLO MONTAR DIRECTORIOS DE DATOS - NO CÓDIGO
+      - ./data:/app/data                    # Base de datos y archivos de datos
+      - ./models:/app/models                # Modelos de IA
+      - ./logs:/app/logs                    # Logs del sistema
+      # NO montar ./config para evitar sobrescribir configuraciones de la app
+      # NO montar ./app para evitar sobrescribir código de la app
     
     devices:
+      # Acceso a GPU/NPU para procesamiento de IA
       - /dev/dri:/dev/dri
+      - /dev/mali0:/dev/mali0
     
+    # Privilegios necesarios para acceso a hardware
     privileged: true
     
+    # Configuración de red
+    networks:
+      - vehicle-detection-network
+    
+    # Límites de recursos
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    # Healthcheck
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/camera_health"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
     
+    # Configuración de logs
     logging:
       driver: "json-file"
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "50m"
+        max-file: "5"
+        compress: "true"
+    
+    # Configuraciones de seguridad
+    security_opt:
+      - no-new-privileges:true
+    
+    # Variables adicionales
+    labels:
+      - "com.vehicle-detection.service=main"
+      - "com.vehicle-detection.version=1.0.0"
+      - "com.vehicle-detection.hardware=radxa-rock-5t"
+
+# Red personalizada
+networks:
+  vehicle-detection-network:
+    driver: bridge
+    name: vehicle-detection-net
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volúmenes persistentes
+volumes:
+  vehicle_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data
+  
+  vehicle_models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./models
+  
+  vehicle_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./logs
