@@ -40,7 +40,7 @@ const CameraConfig = () => {
               controladora_ip: response.controladora_ip || '192.168.1.200'
           });
           
-          logger.info('Configuración de cámara cargada:', response);
+          console.info('Configuración de cámara cargada:', response);
           
       } catch (error) {
           console.error('Error cargando configuración de cámara:', error);
@@ -77,7 +77,7 @@ const CameraConfig = () => {
               await updateCameraConfig('camera_1', config);
           }
           
-          logger.info('Configuración actualizada:', response);
+          console.info('Configuración actualizada:', response);
           
       } catch (error) {
           console.error('Error guardando configuración:', error);
