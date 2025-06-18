@@ -107,7 +107,10 @@ class VideoProcessor:
                             points=[(p[0], p[1]) for p in line_data["points"]],
                             lane=line_data["lane"],
                             line_type=LineType.COUNTING if line_data["line_type"] == "counting" else LineType.SPEED,
-                            distance_to_next=line_data.get("distance_to_next")
+                            distance_to_next=line_data.get("distance_to_next"),
+                            speed_line_id=line_data.get("speed_line_id"),
+                            counting_line_id=line_data.get("counting_line_id"),
+                            direction=line_data.get("direction", self.camera_config.get("direccion", "norte"))
                         )
                         self.analyzer.add_line(line)
                         lines_loaded += 1
@@ -163,6 +166,28 @@ class VideoProcessor:
         
         logger.info("Procesamiento de video detenido")
     
+    def get_raw_frame(self) -> Optional[np.ndarray]:
+        """Obtener frame original sin overlay de análisis"""
+        with self.frame_lock:
+            if hasattr(self, 'latest_raw_frame') and self.latest_raw_frame is not None:
+                return self.latest_raw_frame.copy()
+            return None
+
+    def get_latest_frame(self) -> Optional[np.ndarray]:
+        """Obtener último frame procesado con análisis"""
+        with self.frame_lock:
+            return self.latest_frame.copy() if self.latest_frame is not None else None
+
+    def get_frame_info(self) -> Dict:
+        """Obtener información del frame actual"""
+        return {
+            'fps': self.current_fps,
+            'resolution': f"{self.latest_frame.shape[1]}x{self.latest_frame.shape[0]}" if self.latest_frame is not None else "0x0",
+            'processing_time': getattr(self, 'last_processing_time', 0),
+            'tracks_count': len(getattr(self, 'current_tracks', [])),
+            'detections_count': getattr(self, 'last_detections_count', 0)
+        }
+
     def _processing_loop(self):
         """Loop principal de procesamiento"""
         rtsp_url = self.camera_config.get('rtsp_url')
@@ -220,33 +245,44 @@ class VideoProcessor:
     
     def _process_frame(self, frame: np.ndarray) -> np.ndarray:
         """Procesar frame individual"""
+        start_time = time.time()  # Para medir tiempo de procesamiento
+        
         try:
+            # Guardar frame original para preview
+            with self.frame_lock:
+                self.latest_raw_frame = frame.copy()
+            
             # Mejorar imagen si es necesario (modo nocturno)
             if self.system_config.get('night_vision_enhancement', False):
                 frame = self.detector.enhance_night_vision(frame)
             
             # Detección
             detections = self.detector.detect(frame)
+            self.last_detections_count = len(detections)
             
             # Tracking
             tracks = self.tracker.update(detections)
+            self.current_tracks = tracks
             
             # Análisis de tráfico
             analysis_results = self.analyzer.analyze_frame(tracks, frame.shape)
             
             # Procesar resultados
-            self._process_analysis_results(analysis_results, tracks)
+            asyncio.create_task(self._process_analysis_results(analysis_results, tracks))
             
             # Dibujar overlay si está habilitado
             if self.system_config.get('show_overlay', True):
                 frame = self.analyzer.draw_analysis_overlay(frame, tracks)
+            
+            # Guardar tiempo de procesamiento
+            self.last_processing_time = time.time() - start_time
             
             return frame
             
         except Exception as e:
             logger.error(f"Error procesando frame: {e}")
             return frame
-    
+
     async def _process_analysis_results(self, results: Dict, tracks: List):
         """Procesar resultados del análisis"""
         try:
@@ -256,13 +292,18 @@ class VideoProcessor:
                 track = next((t for t in tracks if t.track_id == crossing['vehicle_id']), None)
                 if track:
                     # Preparar datos para base de datos
+                    calculated_speed = None
+                    for speed_calc in results.get('speed_calculations', []):
+                        if speed_calc['vehicle_id'] == crossing['vehicle_id']:
+                            calculated_speed = speed_calc['speed_kmh']
+                            break
                     crossing_data = {
                         'vehicle_id': crossing['vehicle_id'],
                         'line_id': crossing['line_id'],
                         'line_name': crossing['line_name'],
                         'fase': self.camera_config.get('fase', 'fase1'),
                         'semaforo_estado': 'rojo' if self.analyzer.red_light_active else 'verde',
-                        'velocidad': track.average_velocity * 3.6 if track.average_velocity > 0 else None,
+                        'velocidad': calculated_speed if calculated_speed else (track.average_velocity * 3.6 if track.average_velocity > 0 else None),
                         'direccion': self.camera_config.get('direccion', 'norte'),
                         'No_Controladora': self.camera_config.get('controladora_id', 'CTRL_001'),
                         'confianza': track.confidence,

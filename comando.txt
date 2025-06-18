@@ -1,0 +1,8 @@
+docker stop vehicle-final 2>/dev/null || true
+docker rm vehicle-final 2>/dev/null || true
+docker build -t vehicle-final .
+docker run -d --name vehicle-final --privileged -p 8000:8000 -v /dev:/dev -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro --device=/dev/dri --device=/dev/mali0 -e USE_RKNN=1 vehicle-final
+
+# Test
+sleep 5
+curl http://localhost:8000/api/camera_health

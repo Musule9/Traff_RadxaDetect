@@ -70,11 +70,11 @@ touch app/__init__.py app/core/__init__.py app/services/__init__.py
 # Paso 5: Docker build (sin frontend compilation)
 echo ""
 echo "🐳 Building Docker (solo backend)..."
-docker build -t vehicle-detection-final .
+docker build -t vehicle-final .
 
 if [ $? -ne 0 ]; then
     echo "📋 Mostrando últimas líneas del build para debug..."
-    docker build -t vehicle-detection-final . --no-cache 2>&1 | tail -20
+    docker build --no-cache -t vehicle-detection-final . --no-cache 2>&1 | tail -20
     error_exit "Docker build falló"
 fi
 

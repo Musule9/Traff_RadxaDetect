@@ -17,7 +17,11 @@ class Line:
     points: List[Tuple[int, int]]  # [(x1, y1), (x2, y2)]
     lane: str
     line_type: LineType
-    distance_to_next: Optional[float] = None  # metros
+    distance_to_next: Optional[float] = None  # metros (para líneas de conteo)
+    speed_line_id: Optional[str] = None  # ID de la línea de velocidad asociada
+    counting_line_id: Optional[str] = None  # ID de la línea de conteo asociada (para líneas de velocidad)
+    speed_line_distance: Optional[float] = None  # Distancia específica para cálculo de velocidad
+    direction: Optional[str] = None  # Dirección del flujo
 
 @dataclass
 class Zone:
@@ -148,36 +152,46 @@ class TrafficAnalyzer:
         
         # Buscar pares de líneas para cálculo de velocidad
         for line in self.lines:
-            if line.line_type == LineType.COUNTING and line.distance_to_next:
-                line1_id = line.id
-                # Buscar línea siguiente en el mismo carril
-                line2 = next((l for l in self.lines 
-                            if l.lane == line.lane and l.line_type == LineType.SPEED), None)
+            if line.line_type == LineType.COUNTING:
+                # Buscar si tiene línea de velocidad asociada
+                speed_line = None
+                if hasattr(line, 'speed_line_id') and line.speed_line_id:
+                    speed_line = next((l for l in self.lines if l.id == line.speed_line_id), None)
                 
-                if line2 and line1_id in crossings and line2.id in crossings:
-                    time1 = crossings[line1_id]
-                    time2 = crossings[line2.id]
+                if speed_line and line.id in crossings and speed_line.id in crossings:
+                    time1 = crossings[line.id]
+                    time2 = crossings[speed_line.id]
                     
-                    # Calcular velocidad si no se ha calculado ya
-                    if vehicle_id not in self.vehicle_speeds:
+                    # Verificar si ya calculamos la velocidad para este par
+                    speed_key = f"{vehicle_id}_{line.id}_{speed_line.id}"
+                    if speed_key not in self.vehicle_speeds:
                         time_diff = abs(time2 - time1)
-                        if time_diff > 0:
-                            distance_m = line.distance_to_next
-                            speed_ms = distance_m / time_diff
-                            speed_kmh = speed_ms * 3.6
+                        
+                        if time_diff > 0.1:  # Mínimo 0.1 segundos
+                            # Usar la distancia específica de la línea de velocidad si existe
+                            distance_m = speed_line.speed_line_distance if hasattr(speed_line, 'speed_line_distance') and speed_line.speed_line_distance else line.distance_to_next
                             
-                            self.vehicle_speeds[vehicle_id] = speed_kmh
-                            
-                            return {
-                                'vehicle_id': vehicle_id,
-                                'speed_kmh': speed_kmh,
-                                'distance_m': distance_m,
-                                'time_diff': time_diff,
-                                'lane': line.lane
-                            }
+                            if distance_m and distance_m > 0:
+                                speed_ms = distance_m / time_diff
+                                speed_kmh = speed_ms * 3.6
+                                
+                                # Validar velocidad razonable (0-200 km/h)
+                                if 0 < speed_kmh < 200:
+                                    self.vehicle_speeds[speed_key] = speed_kmh
+                                    
+                                    return {
+                                        'vehicle_id': vehicle_id,
+                                        'speed_kmh': speed_kmh,
+                                        'distance_m': distance_m,
+                                        'time_diff': time_diff,
+                                        'lane': line.lane,
+                                        'line1_name': line.name,
+                                        'line2_name': speed_line.name,
+                                        'calculation_type': 'specific_distance' if hasattr(speed_line, 'speed_line_distance') else 'default_distance'
+                                    }
         
         return None
-    
+
     def _point_crosses_line(self, point: Tuple[float, float], 
                           line_points: List[Tuple[int, int]]) -> bool:
         """Verificar si punto cruza línea"""

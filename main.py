@@ -145,6 +145,10 @@ class LineConfig(BaseModel):
     lane: str
     line_type: str
     distance_to_next: Optional[float] = None
+    speed_line_id: Optional[str] = None
+    counting_line_id: Optional[str] = None
+    speed_line_distance: Optional[float] = None
+    direction: Optional[str] = None
 
 class ZoneConfig(BaseModel):
     id: str
@@ -477,39 +481,130 @@ async def update_camera_config(config: CameraConfig):
 
 @app.get("/api/camera/stream")
 async def get_camera_stream():
-    """Stream de video de la cámara"""
+    """Stream de video HTTP optimizado para navegadores web"""
     def generate_frames():
         while True:
-            if video_processor and video_processor.is_running:
-                frame = video_processor.get_latest_frame()
-                if frame is not None:
-                    height, width = frame.shape[:2]
-                    if width > 1280:
-                        scale = 1280 / width
-                        new_width = 1280
-                        new_height = int(height * scale)
-                        frame = cv2.resize(frame, (new_width, new_height))
-                    
-                    ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                    if ret:
-                        yield (b'--frame\r\n'
-                               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            else:
-                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(placeholder, "Camara no configurada", (50, 240), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                ret, buffer = cv2.imencode('.jpg', placeholder)
-                if ret:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            
-            time.sleep(1/15)
+            try:
+                if video_processor and video_processor.is_running:
+                    # Obtener frame procesado con análisis
+                    frame = video_processor.get_latest_frame()
+                    if frame is not None:
+                        # Redimensionar para web (opcional)
+                        height, width = frame.shape[:2]
+                        if width > 1280:
+                            scale = 1280 / width
+                            new_width = 1280
+                            new_height = int(height * scale)
+                            frame = cv2.resize(frame, (new_width, new_height))
+                        
+                        # Comprimir para web
+                        encode_params = [
+                            cv2.IMWRITE_JPEG_QUALITY, 85,  # Calidad 85%
+                            cv2.IMWRITE_JPEG_OPTIMIZE, 1   # Optimizar
+                        ]
+                        
+                        ret, buffer = cv2.imencode('.jpg', frame, encode_params)
+                        if ret:
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n'
+                                   b'Content-Length: ' + str(len(buffer)).encode() + b'\r\n\r\n' + 
+                                   buffer.tobytes() + b'\r\n')
+                    else:
+                        # Frame placeholder si no hay video
+                        yield _generate_placeholder_frame()
+                else:
+                    # Placeholder cuando no hay cámara configurada
+                    yield _generate_placeholder_frame()
+                
+                # Control de FPS para web (15 FPS es suficiente)
+                time.sleep(1/15)
+                
+            except Exception as e:
+                logger.error(f"Error en streaming: {e}")
+                yield _generate_error_frame()
+                time.sleep(1)
     
     return StreamingResponse(
         generate_frames(),
-        media_type="multipart/x-mixed-replace; boundary=frame"
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Connection": "close"
+        }
     )
 
+def _generate_placeholder_frame():
+    """Generar frame placeholder"""
+    placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+    
+    # Fondo degradado
+    for i in range(480):
+        placeholder[i, :] = [20 + (i//10), 25 + (i//10), 35 + (i//10)]
+    
+    # Texto informativo
+    cv2.putText(placeholder, "SISTEMA DE DETECCION VEHICULAR", (80, 200), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    cv2.putText(placeholder, "Radxa Rock 5T", (230, 240), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 150, 255), 2)
+    cv2.putText(placeholder, "Configure la camara para comenzar", (130, 280), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    
+    ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if ret:
+        return (b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n'
+                b'Content-Length: ' + str(len(buffer)).encode() + b'\r\n\r\n' + 
+                buffer.tobytes() + b'\r\n')
+    return b''
+
+def _generate_error_frame():
+    """Generar frame de error"""
+    error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    error_frame[:] = [40, 20, 20]  # Fondo rojizo
+    
+    cv2.putText(error_frame, "ERROR DE CONEXION", (180, 220), 
+               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(error_frame, "Verificar configuracion RTSP", (150, 260), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    
+    ret, buffer = cv2.imencode('.jpg', error_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if ret:
+        return (b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n'
+                b'Content-Length: ' + str(len(buffer)).encode() + b'\r\n\r\n' + 
+                buffer.tobytes() + b'\r\n')
+    return b''
+
+# AGREGAR TAMBIÉN ESTE ENDPOINT PARA PREVIEW
+@app.get("/api/camera/preview")
+async def get_camera_preview():
+    """Stream de preview sin análisis (más rápido)"""
+    def generate_preview():
+        while True:
+            try:
+                if video_processor and video_processor.is_running:
+                    # Obtener frame original sin overlay
+                    frame = video_processor.get_raw_frame()  # Necesitarás agregar este método
+                    if frame is not None:
+                        # Redimensionar más pequeño para preview
+                        frame = cv2.resize(frame, (320, 240))
+                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                        if ret:
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + 
+                                   buffer.tobytes() + b'\r\n')
+                
+                time.sleep(1/10)  # 10 FPS para preview
+            except:
+                time.sleep(1)
+    
+    return StreamingResponse(
+        generate_preview(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+     
 # Configuración del sistema
 @app.get("/api/config/system")
 async def get_system_config():
