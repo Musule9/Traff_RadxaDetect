@@ -44,17 +44,85 @@ export const apiService = {
   // Cámara - COMPLETO Y CORREGIDO
   async getCameraStatus() {
     const response = await api.get('/api/camera/status');
+    console.log('📊 Camera Status Response:', response.data);
     return response.data;
   },
 
   async getCameraConfig() {
     const response = await api.get('/api/camera/config');
-    return response.data;
+    console.log('⚙️ Camera Config Response:', response.data);
+    
+    // VERIFICAR que la respuesta tenga la estructura esperada
+    if (response.data && typeof response.data === 'object') {
+      // Si tiene estructura anidada, extraer campos principales
+      if (response.data.connection || response.data.traffic_control) {
+        console.warn('⚠️ Detectada estructura anidada antigua, normalizando...');
+        
+        // Normalizar estructura
+        const normalized = {
+          rtsp_url: response.data.rtsp_url || response.data.connection?.rtsp_url || '',
+          fase: response.data.fase || response.data.traffic_control?.fase || 'fase1',
+          direccion: response.data.direccion || response.data.traffic_control?.direccion || 'norte',
+          controladora_id: response.data.controladora_id || response.data.traffic_control?.controladora_id || 'CTRL_001',
+          controladora_ip: response.data.controladora_ip || response.data.traffic_control?.controladora_ip || '192.168.1.200',
+          
+          // Identificación
+          camera_name: response.data.camera_name || response.data.name || '',
+          camera_model: response.data.camera_model || '',
+          camera_location: response.data.camera_location || '',
+          camera_serial: response.data.camera_serial || '',
+          
+          // Red
+          camera_ip: response.data.camera_ip || response.data.connection?.camera_ip || '',
+          username: response.data.username || response.data.connection?.username || 'admin',
+          password: response.data.password || response.data.connection?.password || '',
+          port: response.data.port || response.data.connection?.port || '554',
+          stream_path: response.data.stream_path || '/stream1',
+          
+          // Video
+          resolution: response.data.resolution || '1920x1080',
+          frame_rate: response.data.frame_rate || '30',
+          bitrate: response.data.bitrate || '4000',
+          encoding: response.data.encoding || 'H264',
+          stream_quality: response.data.stream_quality || 'high',
+          
+          // Funciones
+          night_vision: response.data.night_vision || false,
+          motion_detection: response.data.motion_detection || false,
+          recording_enabled: response.data.recording_enabled || false,
+          audio_enabled: response.data.audio_enabled || false,
+          detection_zones: response.data.detection_zones !== false,
+          speed_calculation: response.data.speed_calculation !== false,
+          vehicle_counting: response.data.vehicle_counting !== false,
+          license_plate_recognition: response.data.license_plate_recognition || false,
+          
+          enabled: response.data.enabled || false
+        };
+        
+        console.log('🧹 Estructura normalizada:', normalized);
+        return normalized;
+      }
+      
+      // Estructura ya es limpia
+      return response.data;
+    }
+    // Fallback si no hay respuesta válida
+    console.warn('⚠️ Respuesta de configuración inválida, usando valores por defecto');
+    return {
+      rtsp_url: '',
+      fase: 'fase1',
+      direccion: 'norte',
+      controladora_id: 'CTRL_001',
+      controladora_ip: '192.168.1.200',
+      enabled: false
+    };
   },
 
   async updateCameraConfig(config) {
-    // CORREGIDO: Asegurar que se envían todos los campos necesarios
-    const fullConfig = {
+    console.log('💾 Actualizando configuración de cámara:', config);
+    
+    // ASEGURAR estructura limpia antes de enviar
+    const cleanConfig = {
       // Campos básicos requeridos
       rtsp_url: config.rtsp_url || '',
       fase: config.fase || 'fase1',
@@ -83,22 +151,39 @@ export const apiService = {
       stream_quality: config.stream_quality || 'high',
       
       // Configuraciones avanzadas
-      night_vision: config.night_vision || false,
-      motion_detection: config.motion_detection || false,
-      recording_enabled: config.recording_enabled || false,
-      audio_enabled: config.audio_enabled || false,
+      night_vision: Boolean(config.night_vision),
+      motion_detection: Boolean(config.motion_detection),
+      recording_enabled: Boolean(config.recording_enabled),
+      audio_enabled: Boolean(config.audio_enabled),
       
       // Configuración de análisis
       detection_zones: config.detection_zones !== false,
       speed_calculation: config.speed_calculation !== false,
       vehicle_counting: config.vehicle_counting !== false,
-      license_plate_recognition: config.license_plate_recognition || false,
+      license_plate_recognition: Boolean(config.license_plate_recognition),
       
       // Estado
-      enabled: config.enabled !== false
+      enabled: true  // Siempre habilitar al actualizar
     };
 
-    const response = await api.post('/api/camera/config', fullConfig);
+    console.log('🧹 Configuración limpia a enviar:', cleanConfig);
+
+    const response = await api.post('/api/camera/config', cleanConfig);
+    console.log('✅ Respuesta del servidor:', response.data);
+    return response.data;
+  },
+
+  async resetCameraConfig() {
+    console.log('🧹 Reseteando configuración de cámara...');
+    const response = await api.post('/api/camera/config/reset');
+    console.log('✅ Configuración reseteada:', response.data);
+    return response.data;
+  },
+
+  async restartCameraProcessing() {
+    console.log('🔄 Reiniciando procesamiento de cámara...');
+    const response = await api.post('/api/camera/restart');
+    console.log('✅ Procesamiento reiniciado:', response.data);
     return response.data;
   },
 
@@ -226,6 +311,25 @@ export const apiService = {
         processing_fps: 0
       };
     }
+  },
+
+  async testCameraStream(rtspUrl) {
+    console.log('🧪 Probando stream:', rtspUrl);
+    try {
+      const response = await api.post('/api/camera/test', { rtsp_url: rtspUrl });
+      return response.data;
+    } catch (error) {
+      console.warn('Test de stream no disponible:', error);
+      // Fallback: verificar que la URL tenga formato válido
+      if (rtspUrl && rtspUrl.startsWith('rtsp://')) {
+        return { success: true, message: 'URL válida (test offline)' };
+      } else {
+        return { success: false, message: 'URL RTSP inválida' };
+      }
+    }
+  },
+  getCameraFrameUrl(cameraId) {
+    return `${api.defaults.baseURL}/api/camera/stream?camera=${cameraId}&t=${Date.now()}`;
   },
 
   // NUEVO: Método para test de conectividad

@@ -7,6 +7,7 @@ import threading
 import json
 from queue import Queue
 from loguru import logger
+import os
 
 from .detector import VehicleDetector
 from .tracker import BYTETracker
@@ -385,7 +386,74 @@ class VideoProcessor:
             self.analyzer.update_red_light_status(is_red)
     
     async def _load_analysis_config(self):
-        """Cargar configuración de análisis desde archivo"""
-        # Esta función se implementará para cargar líneas y zonas desde la configuración
-        # Por ahora dejamos la implementación básica
-        pass
+        """Cargar configuración de análisis desde archivo - CORREGIDO"""
+        try:
+            os.makedirs("/app/config", exist_ok=True)
+            
+            # Asegurar que el archivo existe
+            analysis_file = "/app/config/analysis.json"
+            if not os.path.exists(analysis_file):
+                logger.info("📝 Creando archivo de análisis por defecto")
+                default_analysis = {"lines": {}, "zones": {}}
+                with open(analysis_file, "w") as f:
+                    json.dump(default_analysis, f, indent=2)
+                return
+            
+            # Cargar configuración
+            with open(analysis_file, "r") as f:
+                analysis_config = json.load(f)
+            
+            # Cargar líneas
+            lines_config = analysis_config.get("lines", {})
+            lines_loaded = 0
+            for line_id, line_data in lines_config.items():
+                if line_data.get("enabled", True):
+                    try:
+                        from .analyzer import Line, LineType
+                        line = Line(
+                            id=line_data["id"],
+                            name=line_data["name"],
+                            points=[(p[0], p[1]) for p in line_data["points"]],
+                            lane=line_data["lane"],
+                            line_type=LineType.COUNTING if line_data["line_type"] == "counting" else LineType.SPEED,
+                            distance_to_next=line_data.get("distance_to_next"),
+                            speed_line_id=line_data.get("speed_line_id"),
+                            counting_line_id=line_data.get("counting_line_id"),
+                            direction=line_data.get("direction", self.camera_config.get("direccion", "norte"))
+                        )
+                        self.analyzer.add_line(line)
+                        lines_loaded += 1
+                        logger.info(f"✅ Línea cargada: {line.name}")
+                    except Exception as e:
+                        logger.error(f"❌ Error cargando línea {line_id}: {e}")
+            
+            # Cargar zonas
+            zones_config = analysis_config.get("zones", {})
+            zones_loaded = 0
+            for zone_id, zone_data in zones_config.items():
+                if zone_data.get("enabled", True):
+                    try:
+                        from .analyzer import Zone
+                        zone = Zone(
+                            id=zone_data["id"],
+                            name=zone_data["name"],
+                            points=[(p[0], p[1]) for p in zone_data["points"]],
+                            zone_type=zone_data["zone_type"]
+                        )
+                        self.analyzer.add_zone(zone)
+                        zones_loaded += 1
+                        logger.info(f"✅ Zona cargada: {zone.name}")
+                    except Exception as e:
+                        logger.error(f"❌ Error cargando zona {zone_id}: {e}")
+            
+            logger.info(f"📊 Configuración de análisis cargada: {lines_loaded} líneas, {zones_loaded} zonas")
+                        
+        except Exception as e:
+            logger.error(f"❌ Error cargando configuración de análisis: {e}")
+
+    def get_raw_frame(self) -> Optional[np.ndarray]:
+        """Obtener frame original sin overlay de análisis"""
+        with self.frame_lock:
+            if hasattr(self, 'latest_raw_frame') and self.latest_raw_frame is not None:
+                return self.latest_raw_frame.copy()
+            return None

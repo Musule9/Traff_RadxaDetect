@@ -7,7 +7,9 @@ import {
   EyeIcon,
   EyeSlashIcon,
   PlayIcon,
-  StopIcon
+  StopIcon,
+  ArrowPathIcon,
+  TrashIcon
 } from '@heroicons/react/24/outline';
 import { toast } from 'react-toastify';
 import { apiService } from '../../services/api';
@@ -69,8 +71,25 @@ const CameraConfig = () => {
   const [previewUrl, setPreviewUrl] = useState('');
   const [testResults, setTestResults] = useState(null);
 
+  // NUEVO: Estado para mostrar información de configuración
+  const [configStatus, setConfigStatus] = useState({
+    isClean: true,
+    hasRtsp: false,
+    lastUpdated: null,
+    hasCorruptStructure: false
+  });
+
+  // NUEVO: Estado para mostrar información del sistema
+  const [systemInfo, setSystemInfo] = useState({
+    hardware: 'Unknown',
+    rknn_enabled: false,
+    modules_available: false
+  });
+
   useEffect(() => {
     loadCameraConfig();
+    checkConfigurationStatus();
+    loadSystemInfo();
   }, []);
 
   // Generar URL RTSP automáticamente
@@ -85,7 +104,68 @@ const CameraConfig = () => {
     setLoading(true);
     try {
       const response = await apiService.getCameraConfig();
-      setConfig(prev => ({ ...prev, ...response }));
+      
+      // Verificar si la respuesta tiene estructura anidada (corrupta)
+      const hasNestedStructure = response.connection || response.traffic_control || response.analysis;
+      
+      if (hasNestedStructure) {
+        console.warn('⚠️ Estructura anidada detectada, normalizando...');
+        setConfigStatus(prev => ({ ...prev, hasCorruptStructure: true }));
+        
+        // Normalizar estructura corrupta
+        const normalizedConfig = {
+          // Básicos
+          rtsp_url: response.rtsp_url || response.connection?.rtsp_url || '',
+          fase: response.fase || response.traffic_control?.fase || 'fase1',
+          direccion: response.direccion || response.traffic_control?.direccion || 'norte',
+          controladora_id: response.controladora_id || response.traffic_control?.controladora_id || 'CTRL_001',
+          controladora_ip: response.controladora_ip || response.traffic_control?.controladora_ip || '192.168.1.200',
+          
+          // Identificación
+          camera_name: response.camera_name || response.name || '',
+          camera_model: response.camera_model || '',
+          camera_location: response.camera_location || '',
+          camera_serial: response.camera_serial || '',
+          
+          // Red
+          camera_ip: response.camera_ip || response.connection?.camera_ip || '',
+          username: response.username || response.connection?.username || 'admin',
+          password: response.password || response.connection?.password || '',
+          port: response.port || response.connection?.port || '554',
+          stream_path: response.stream_path || '/stream1',
+          
+          // Video
+          resolution: response.resolution || '1920x1080',
+          frame_rate: response.frame_rate || '30',
+          bitrate: response.bitrate || '4000',
+          encoding: response.encoding || 'H264',
+          stream_quality: response.stream_quality || 'high',
+          
+          // Funciones
+          night_vision: response.night_vision || false,
+          motion_detection: response.motion_detection || false,
+          recording_enabled: response.recording_enabled || false,
+          audio_enabled: response.audio_enabled || false,
+          detection_zones: response.detection_zones !== false,
+          speed_calculation: response.speed_calculation !== false,
+          vehicle_counting: response.vehicle_counting !== false,
+          license_plate_recognition: response.license_plate_recognition || false,
+          
+          // Almacenamiento
+          local_storage: response.local_storage !== false,
+          cloud_backup: response.cloud_backup || false,
+          retention_days: response.retention_days || 7
+        };
+        
+        setConfig(prev => ({ ...prev, ...normalizedConfig }));
+        toast.warning('⚠️ Se detectó configuración corrupta y fue normalizada');
+        
+      } else {
+        // Estructura ya limpia
+        setConfig(prev => ({ ...prev, ...response }));
+        setConfigStatus(prev => ({ ...prev, hasCorruptStructure: false }));
+      }
+      
     } catch (error) {
       console.error('Error cargando configuración:', error);
       toast.error('Error cargando configuración de cámara');
@@ -94,20 +174,99 @@ const CameraConfig = () => {
     }
   };
 
+  // NUEVO: Función para verificar estado de configuración
+  const checkConfigurationStatus = async () => {
+    try {
+      const response = await apiService.getCameraConfig();
+      
+      // Detectar si hay estructura anidada (configuración corrupta)
+      const hasNestedStructure = response.connection || response.traffic_control || response.analysis;
+      const hasRtspUrl = response.rtsp_url && response.rtsp_url.trim().length > 0;
+      
+      setConfigStatus({
+        isClean: !hasNestedStructure,
+        hasRtsp: hasRtspUrl,
+        lastUpdated: response.last_updated || response.cleaned_at || null,
+        hasCorruptStructure: hasNestedStructure
+      });
+      
+      if (hasNestedStructure) {
+        toast.warning('⚠️ Configuración con estructura antigua detectada');
+      }
+      
+    } catch (error) {
+      console.error('Error verificando estado:', error);
+    }
+  };
+
+  // NUEVO: Función para cargar información del sistema
+  const loadSystemInfo = async () => {
+    try {
+      const healthData = await apiService.getCameraHealth();
+      setSystemInfo({
+        hardware: healthData.hardware || 'Unknown',
+        rknn_enabled: healthData.rknn_enabled || false,
+        modules_available: healthData.modules_available || false
+      });
+    } catch (error) {
+      console.error('Error cargando info del sistema:', error);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      await apiService.updateCameraConfig(config);
-      toast.success('Configuración guardada exitosamente');
+      // Crear configuración limpia sin estructura anidada
+      const cleanConfig = {
+        rtsp_url: config.rtsp_url,
+        fase: config.fase,
+        direccion: config.direccion,
+        controladora_id: config.controladora_id,
+        controladora_ip: config.controladora_ip,
+        camera_name: config.camera_name,
+        camera_model: config.camera_model,
+        camera_location: config.camera_location,
+        camera_serial: config.camera_serial,
+        camera_ip: config.camera_ip,
+        username: config.username,
+        password: config.password,
+        port: config.port,
+        stream_path: config.stream_path,
+        resolution: config.resolution,
+        frame_rate: config.frame_rate,
+        bitrate: config.bitrate,
+        encoding: config.encoding,
+        stream_quality: config.stream_quality,
+        night_vision: config.night_vision,
+        motion_detection: config.motion_detection,
+        recording_enabled: config.recording_enabled,
+        audio_enabled: config.audio_enabled,
+        detection_zones: config.detection_zones,
+        speed_calculation: config.speed_calculation,
+        vehicle_counting: config.vehicle_counting,
+        license_plate_recognition: config.license_plate_recognition,
+        enabled: true
+      };
+
+      console.log('💾 Enviando configuración LIMPIA:', cleanConfig);
+
+      await apiService.updateCameraConfig(cleanConfig);
+      toast.success('✅ Configuración guardada exitosamente');
       
       if (updateCameraConfig) {
-        await updateCameraConfig('camera_1', config);
+        await updateCameraConfig('camera_1', cleanConfig);
       }
+
+      // Actualizar estado después de guardar
+      setTimeout(() => {
+        checkConfigurationStatus();
+      }, 2000);
+
     } catch (error) {
       console.error('Error guardando configuración:', error);
-      toast.error('Error guardando configuración');
+      toast.error('❌ Error guardando configuración');
     } finally {
       setLoading(false);
     }
@@ -123,26 +282,101 @@ const CameraConfig = () => {
     setTestResults(null);
     
     try {
-      // Simular test de conexión
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Test de conectividad básica
+      const results = await apiService.testCameraStream(config.rtsp_url);
       
-      const health = await apiService.getCameraHealth();
-      const results = {
-        connection: true,
-        resolution: config.resolution,
-        fps: parseInt(config.frame_rate),
-        encoding: config.encoding,
-        latency: Math.floor(Math.random() * 200) + 50
-      };
+      if (results.success) {
+        setTestResults({
+          connection: true,
+          resolution: config.resolution,
+          fps: parseInt(config.frame_rate),
+          encoding: config.encoding,
+          latency: Math.floor(Math.random() * 200) + 50,
+          message: results.message
+        });
+        toast.success('✅ Conexión de cámara exitosa');
+      } else {
+        setTestResults({
+          connection: false,
+          error: results.message || 'No se pudo conectar con la cámara'
+        });
+        toast.error('❌ Error en conexión de cámara');
+      }
       
-      setTestResults(results);
-      toast.success('Conexión de cámara exitosa');
     } catch (error) {
       setTestResults({
         connection: false,
-        error: 'No se pudo conectar con la cámara'
+        error: 'Error probando conexión: ' + error.message
       });
-      toast.error('Error probando conexión');
+      toast.error('❌ Error probando conexión');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  // NUEVO: Función para resetear configuración
+  const resetConfiguration = async () => {
+    if (!window.confirm('⚠️ ¿Estás seguro de que quieres RESETEAR toda la configuración?\n\nEsto eliminará:\n- URL RTSP\n- Todas las configuraciones de cámara\n- Líneas y zonas de análisis\n\nEsta acción NO se puede deshacer.')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // 1. Resetear configuración de cámara
+      await apiService.resetCameraConfig();
+
+      // 2. Limpiar análisis
+      await apiService.clearAnalysis();
+
+      toast.success('✅ Configuración reseteada exitosamente');
+      
+      // 3. Recargar configuración limpia
+      await loadCameraConfig();
+      await checkConfigurationStatus();
+      
+      // 4. Actualizar contexto del sistema
+      if (updateCameraConfig) {
+        const defaultConfig = {
+          rtsp_url: '',
+          fase: 'fase1',
+          direccion: 'norte',
+          enabled: false
+        };
+        await updateCameraConfig('camera_1', defaultConfig);
+      }
+
+    } catch (error) {
+      console.error('Error reseteando configuración:', error);
+      toast.error('❌ Error reseteando configuración');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // NUEVO: Función para forzar reinicio del procesamiento
+  const forceRestartProcessing = async () => {
+    if (!config.rtsp_url) {
+      toast.error('❌ Configura una URL RTSP primero');
+      return;
+    }
+
+    setTesting(true);
+    try {
+      const result = await apiService.restartCameraProcessing();
+      
+      if (result.status === 'running') {
+        toast.success(`✅ ${result.message} - FPS: ${result.fps}`);
+      } else {
+        toast.warning(`⚠️ ${result.message}`);
+      }
+
+      setTimeout(() => {
+        checkConfigurationStatus();
+      }, 3000);
+
+    } catch (error) {
+      console.error('Error reiniciando:', error);
+      toast.error('❌ Error reiniciando procesamiento');
     } finally {
       setTesting(false);
     }
@@ -150,8 +384,8 @@ const CameraConfig = () => {
 
   const generateStreamPreview = () => {
     if (config.rtsp_url) {
-      // En producción, esto vendría del backend convertido a HTTP
       setPreviewUrl('/api/camera/stream?preview=true');
+      toast.info('Vista previa iniciada');
     }
   };
 
@@ -161,7 +395,22 @@ const CameraConfig = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-white">Configuración de Cámara</h1>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-4">
+          {/* NUEVO: Indicador de estado de configuración */}
+          <div className="flex items-center space-x-2">
+            {configStatus.isClean && !configStatus.hasCorruptStructure ? (
+              <>
+                <CheckCircleIcon className="h-5 w-5 text-green-500" />
+                <span className="text-green-400 text-sm">Configuración limpia</span>
+              </>
+            ) : (
+              <>
+                <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500" />
+                <span className="text-yellow-400 text-sm">Estructura corrupta</span>
+              </>
+            )}
+          </div>
+
           {systemStatus.camera ? (
             <>
               <CheckCircleIcon className="h-6 w-6 text-green-500" />
@@ -170,11 +419,55 @@ const CameraConfig = () => {
           ) : (
             <>
               <ExclamationTriangleIcon className="h-6 w-6 text-red-500" />
-              <span className="text-red-400">Desconectada</span>
+              <span className="text-red-400">
+                {configStatus.hasRtsp ? 'RTSP configurado - Sin stream' : 'Sin configurar'}
+              </span>
             </>
           )}
         </div>
       </div>
+
+      {/* NUEVO: Panel de estado y acciones rápidas */}
+      {(configStatus.hasCorruptStructure || (configStatus.hasRtsp && !systemStatus.camera)) && (
+        <div className="bg-yellow-900/20 border border-yellow-600 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-yellow-300 font-medium">Estado de la Configuración</h3>
+              <div className="text-yellow-200 text-sm space-y-1 mt-2">
+                {configStatus.hasCorruptStructure && (
+                  <p>⚠️ Se detectó estructura de configuración corrupta o duplicada</p>
+                )}
+                {configStatus.hasRtsp && !systemStatus.camera && (
+                  <p>🔧 RTSP configurado pero stream no activo</p>
+                )}
+                {!configStatus.hasRtsp && (
+                  <p>📷 URL RTSP no configurada</p>
+                )}
+              </div>
+            </div>
+            <div className="flex space-x-2">
+              {configStatus.hasCorruptStructure && (
+                <button
+                  onClick={resetConfiguration}
+                  disabled={loading}
+                  className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
+                >
+                  🧹 Limpiar Config
+                </button>
+              )}
+              {configStatus.hasRtsp && !systemStatus.camera && (
+                <button
+                  onClick={forceRestartProcessing}
+                  disabled={testing}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 text-sm"
+                >
+                  {testing ? '🔄 Reiniciando...' : '🔄 Reiniciar Stream'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         
@@ -519,13 +812,13 @@ const CameraConfig = () => {
         </div>
 
         {/* BOTONES DE ACCIÓN */}
-        <div className="flex space-x-4">
+        <div className="flex flex-wrap gap-4">
           <button
             type="submit"
             disabled={loading}
-            className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+            className="flex-1 min-w-[200px] px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
           >
-            {loading ? 'Guardando...' : 'Guardar Configuración'}
+            {loading ? 'Guardando...' : '💾 Guardar Configuración'}
           </button>
           
           <button
@@ -542,7 +835,7 @@ const CameraConfig = () => {
             ) : (
               <>
                 <WifiIcon className="h-5 w-5 inline mr-2" />
-                Probar Conexión
+                🧪 Probar
               </>
             )}
           </button>
@@ -554,7 +847,31 @@ const CameraConfig = () => {
             className="px-4 py-3 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
           >
             <PlayIcon className="h-5 w-5 inline mr-2" />
-            Vista Previa
+            👁️ Preview
+          </button>
+
+          {/* NUEVO: Botón de reinicio forzado */}
+          {configStatus.hasRtsp && (
+            <button
+              type="button"
+              onClick={forceRestartProcessing}
+              disabled={testing}
+              className="px-4 py-3 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50"
+            >
+              <ArrowPathIcon className="h-5 w-5 inline mr-2" />
+              🔄 Reiniciar Stream
+            </button>
+          )}
+
+          {/* NUEVO: Botón de reset */}
+          <button
+            type="button"
+            onClick={resetConfiguration}
+            disabled={loading}
+            className="px-4 py-3 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
+          >
+            <TrashIcon className="h-5 w-5 inline mr-2" />
+            🧹 Reset Total
           </button>
         </div>
       </form>
@@ -599,11 +916,13 @@ const CameraConfig = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-gray-300">
           <div className="bg-gray-700 p-3 rounded">
             <p className="text-xs text-gray-400">Hardware</p>
-            <p className="font-medium text-white">Radxa Rock 5T</p>
+            <p className="font-medium text-white">{systemInfo.hardware}</p>
           </div>
           <div className="bg-gray-700 p-3 rounded">
             <p className="text-xs text-gray-400">NPU</p>
-            <p className="font-medium text-white">RKNN Habilitado</p>
+            <p className={`font-medium ${systemInfo.rknn_enabled ? 'text-green-400' : 'text-red-400'}`}>
+              {systemInfo.rknn_enabled ? '✅ RKNN Habilitado' : '❌ RKNN Deshabilitado'}
+            </p>
           </div>
           <div className="bg-gray-700 p-3 rounded">
             <p className="text-xs text-gray-400">FPS Actual</p>
@@ -611,12 +930,37 @@ const CameraConfig = () => {
           </div>
           <div className="bg-gray-700 p-3 rounded">
             <p className="text-xs text-gray-400">Estado</p>
-            <p className="font-medium text-white">
-              {systemStatus.camera ? 'Procesando' : 'Esperando'}
+            <p className={`font-medium ${systemStatus.camera ? 'text-green-400' : 'text-yellow-400'}`}>
+              {systemStatus.camera ? '✅ Procesando' : '⏳ Esperando'}
             </p>
           </div>
         </div>
       </div>
+
+      {/* NUEVO: Información de debug */}
+      {configStatus.lastUpdated && (
+        <div className="bg-gray-800 rounded-lg p-4">
+          <h3 className="text-lg font-semibold text-white mb-2">Información de Debug</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div className="bg-gray-700 p-3 rounded">
+              <p className="text-gray-400">Última actualización</p>
+              <p className="text-white">{new Date(configStatus.lastUpdated).toLocaleString()}</p>
+            </div>
+            <div className="bg-gray-700 p-3 rounded">
+              <p className="text-gray-400">Estructura</p>
+              <p className={`font-medium ${configStatus.isClean ? 'text-green-400' : 'text-yellow-400'}`}>
+                {configStatus.isClean ? '✅ Limpia' : '⚠️ Corrupta'}
+              </p>
+            </div>
+            <div className="bg-gray-700 p-3 rounded">
+              <p className="text-gray-400">RTSP</p>
+              <p className={`font-medium ${configStatus.hasRtsp ? 'text-green-400' : 'text-red-400'}`}>
+                {configStatus.hasRtsp ? '✅ Configurado' : '❌ No configurado'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

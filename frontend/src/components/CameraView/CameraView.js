@@ -66,11 +66,12 @@ const CameraView = () => {
     if (streamError && isStreamActive) {
       // Intentar reconectar cada 5 segundos
       reconnectTimer = setTimeout(() => {
-        console.log('Intentando reconectar stream...');
+        console.log('🔄 Intentando reconectar stream...');
         setStreamError(false);
         // Forzar reload de la imagen
         if (imgRef.current) {
-          imgRef.current.src = `/api/camera/stream?t=${Date.now()}`;
+          const newSrc = `/api/camera/stream?t=${Date.now()}`;
+          imgRef.current.src = newSrc;
         }
       }, 5000);
     }
@@ -82,6 +83,7 @@ const CameraView = () => {
     };
   }, [streamError, isStreamActive]);
 
+  
   const loadAnalysisConfig = async (forceReload = false) => {
     if (configLoaded && !forceReload) return;
     
@@ -121,16 +123,28 @@ const CameraView = () => {
     }
   };
 
+  // CORRECCIÓN: Función de clic mejorada para líneas
   const handleMouseClick = (e) => {
     if (!isDrawingLine && !isDrawingZone) return;
 
     const rect = e.target.getBoundingClientRect();
-    const x = Math.round(e.clientX - rect.left);
-    const y = Math.round(e.clientY - rect.top);
+    
+    // IMPORTANTE: Calcular coordenadas reales basadas en el tamaño de la imagen
+    const imgElement = imgRef.current;
+    if (!imgElement) return;
+    
+    const scaleX = imgElement.naturalWidth / imgElement.clientWidth;
+    const scaleY = imgElement.naturalHeight / imgElement.clientHeight;
+    
+    const x = Math.round((e.clientX - rect.left) * scaleX);
+    const y = Math.round((e.clientY - rect.top) * scaleY);
+
+    console.log(`🎯 Clic en: (${x}, ${y}) - Escala: ${scaleX.toFixed(2)} x ${scaleY.toFixed(2)}`);
 
     if (isDrawingLine) {
       if (!currentLine) {
         setCurrentLine({ start: { x, y }, end: null });
+        console.log('📍 Primer punto de línea establecido');
       } else {
         const newLine = {
           id: `line_${Date.now()}`,
@@ -138,41 +152,56 @@ const CameraView = () => {
           points: [[currentLine.start.x, currentLine.start.y], [x, y]],
           lane: lineConfig.lane || `carril_${lineConfig.carril_number}`,
           line_type: lineConfig.type,
-          distance_to_next: lineConfig.type === 'speed' ? lineConfig.distance : null,
+          distance_to_next: lineConfig.type === 'speed' ? parseFloat(lineConfig.distance) : null,
           speed_limit: lineConfig.speed_limit,
           carril_number: lineConfig.carril_number,
           direction_flow: lineConfig.direction_flow,
-          priority: lineConfig.priority
+          priority: lineConfig.priority,
+          enabled: true
         };
         
         setLines([...lines, newLine]);
         setCurrentLine(null);
         setIsDrawingLine(false);
-        toast.success('Línea agregada');
+        toast.success(`✅ Línea "${newLine.name}" agregada`);
+        
+        console.log('✅ Línea creada:', newLine);
         
         // Reset form
         setLineConfig({
           name: '',
           lane: '',
           distance: 10.0,
-          type: 'counting'
+          type: 'counting',
+          speed_limit: 50,
+          carril_number: 1,
+          direction_flow: 'bidirectional',
+          priority: 'normal'
         });
       }
     } else if (isDrawingZone) {
       setCurrentZone([...currentZone, { x, y }]);
+      console.log(`📍 Punto de zona agregado: (${x}, ${y}) - Total: ${currentZone.length + 1}`);
     }
   };
 
   const handleMouseMove = (e) => {
     if (isDrawingLine && currentLine && !currentLine.end) {
       const rect = e.target.getBoundingClientRect();
-      const x = Math.round(e.clientX - rect.left);
-      const y = Math.round(e.clientY - rect.top);
+      const imgElement = imgRef.current;
       
-      setCurrentLine({
-        ...currentLine,
-        end: { x, y }
-      });
+      if (imgElement) {
+        const scaleX = imgElement.naturalWidth / imgElement.clientWidth;
+        const scaleY = imgElement.naturalHeight / imgElement.clientHeight;
+        
+        const x = Math.round((e.clientX - rect.left) * scaleX);
+        const y = Math.round((e.clientY - rect.top) * scaleY);
+        
+        setCurrentLine({
+          ...currentLine,
+          end: { x, y }
+        });
+      }
     }
   };
 
@@ -202,7 +231,7 @@ const CameraView = () => {
 
   const saveConfiguration = async () => {
     if (lines.length === 0 && zones.length === 0) {
-      toast.error('No hay líneas o zonas para guardar');
+      toast.error('❌ No hay líneas o zonas para guardar');
       return;
     }
     
@@ -211,51 +240,57 @@ const CameraView = () => {
       let savedLines = 0;
       let savedZones = 0;
       
-      // Guardar líneas
+      // Guardar líneas con validación
       for (const line of lines) {
-        const lineData = {
-          id: line.id,
-          name: line.name,
-          points: line.points, // Ya están en formato correcto [[x, y], [x, y]]
-          lane: line.lane,
-          line_type: line.line_type,
-          distance_to_next: line.distance_to_next
-        };
-        
-        await apiService.addLine(lineData);
-        savedLines++;
+        if (!line.saved) { // Solo guardar líneas nuevas
+          const lineData = {
+            id: line.id,
+            name: line.name,
+            points: line.points, // Ya están en formato [[x, y], [x, y]]
+            lane: line.lane,
+            line_type: line.line_type,
+            distance_to_next: line.distance_to_next,
+            enabled: true
+          };
+          
+          console.log('💾 Guardando línea:', lineData);
+          await apiService.addLine(lineData);
+          savedLines++;
+        }
       }
       
-      // Guardar zonas
+      // Guardar zonas con validación
       for (const zone of zones) {
-        const zoneData = {
-          id: zone.id,
-          name: zone.name,
-          points: zone.points, // Ya están en formato correcto [[x, y], [x, y], ...]
-          zone_type: zone.zone_type
-        };
-        
-        await apiService.addZone(zoneData);
-        savedZones++;
+        if (!zone.saved) { // Solo guardar zonas nuevas
+          const zoneData = {
+            id: zone.id,
+            name: zone.name,
+            points: zone.points, // Ya están en formato [[x, y], [x, y], ...]
+            zone_type: zone.zone_type,
+            enabled: true
+          };
+          
+          console.log('💾 Guardando zona:', zoneData);
+          await apiService.addZone(zoneData);
+          savedZones++;
+        }
       }
       
-      toast.success(`Configuración guardada: ${savedLines} líneas, ${savedZones} zonas`);
+      toast.success(`✅ Configuración guardada: ${savedLines} líneas, ${savedZones} zonas`);
       
-      // Limpiar configuración temporal
-      setLines([]);
-      setZones([]);
-      setCurrentLine(null);
-      setCurrentZone([]);
+      // Marcar como guardado
+      setLines(prev => prev.map(line => ({ ...line, saved: true })));
+      setZones(prev => prev.map(zone => ({ ...zone, saved: true })));
       
       // Recargar configuración guardada
       setTimeout(() => {
         setConfigLoaded(false);
-        loadAnalysisConfig();
+        loadAnalysisConfig(true); // Forzar recarga
       }, 1000);
       
     } catch (error) {
-      console.error('Error guardando configuración:', error);
-      toast.error('Error guardando configuración');
+      console.error('❌ Error guardando configuración:', error);
+      toast.error('❌ Error guardando configuración');
     } finally {
       setLoading(false);
     }
@@ -609,7 +644,7 @@ const CameraView = () => {
         <div className="relative bg-black rounded-lg overflow-hidden">
           {isStreamActive && systemStatus.camera && !streamError ? (
             <div className="relative">
-              {/* Imagen del stream HTTP */}
+              {/* CORREGIDO: Imagen del stream con manejo de errores mejorado */}
               <img
                 ref={imgRef}
                 src={`/api/camera/stream?t=${Date.now()}`}
@@ -617,67 +652,35 @@ const CameraView = () => {
                 className="w-full h-auto rounded-lg cursor-crosshair"
                 onClick={handleMouseClick}
                 onMouseMove={handleMouseMove}
-                onError={() => {
-                  console.error('Error en stream HTTP');
+                onError={(e) => {
+                  console.error('❌ Error en stream:', e);
                   setStreamError(true);
+                  // Intentar reconexión automática
+                  setTimeout(() => {
+                    if (imgRef.current) {
+                      imgRef.current.src = `/api/camera/stream?t=${Date.now()}`;
+                    }
+                  }, 5000);
                 }}
                 onLoad={() => {
+                  console.log('✅ Stream cargado exitosamente');
                   setStreamError(false);
                 }}
                 style={{ 
                   maxHeight: '600px', 
                   objectFit: 'contain',
-                  backgroundColor: '#000'
+                  backgroundColor: '#000',
+                  minHeight: '400px' // Altura mínima
                 }}
               />
               
-              {/* Overlay de información en tiempo real */}
-              <div className="absolute top-4 left-4 bg-black/70 rounded-lg p-3 text-white text-sm">
-                <div className="flex items-center space-x-4">
-                  <div>
-                    <span className="text-gray-300">Resolución:</span> 
-                    <span className="ml-1 text-white">1280x720</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-300">Calidad:</span> 
-                    <span className="ml-1 text-green-400">HD</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-300">Latencia:</span> 
-                    <span className="ml-1 text-blue-400">~200ms</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Overlay de estadísticas en tiempo real */}
-              <div className="absolute bottom-4 right-4 bg-black/70 rounded-lg p-3 text-white text-sm">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <span className="text-gray-300">Vehículos:</span> 
-                    <span className="ml-1 text-yellow-400">3</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-300">Líneas:</span> 
-                    <span className="ml-1 text-green-400">{lines.length}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-300">Zonas:</span> 
-                    <span className="ml-1 text-purple-400">{zones.length}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-300">Análisis:</span> 
-                    <span className="ml-1 text-blue-400">ON</span>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Overlay SVG para líneas y zonas - MANTENER IGUAL */}
+              {/* CORREGIDO: Overlay SVG con coordenadas correctas */}
               {showOverlay && (
                 <svg 
                   className="absolute top-0 left-0 w-full h-full pointer-events-none"
                   style={{ maxHeight: '600px' }}
-                  preserveAspectRatio="none"
-                  viewBox="0 0 1280 720"
+                  preserveAspectRatio="xMidYMid meet"
+                  viewBox={`0 0 ${imgRef.current?.naturalWidth || 1280} ${imgRef.current?.naturalHeight || 720}`}
                 >
                   {/* Líneas guardadas */}
                   {lines.map((line) => (
@@ -688,14 +691,18 @@ const CameraView = () => {
                         x2={line.points[1][0]}
                         y2={line.points[1][1]}
                         stroke={line.line_type === 'counting' ? '#10B981' : '#F59E0B'}
-                        strokeWidth="3"
+                        strokeWidth="4"
+                        strokeDasharray={line.saved ? "0" : "10,5"}
                       />
                       <text
                         x={(line.points[0][0] + line.points[1][0]) / 2}
-                        y={(line.points[0][1] + line.points[1][1]) / 2 - 10}
+                        y={(line.points[0][1] + line.points[1][1]) / 2 - 15}
                         fill="#FFFFFF"
-                        fontSize="12"
+                        fontSize="14"
+                        fontWeight="bold"
                         textAnchor="middle"
+                        stroke="#000000"
+                        strokeWidth="1"
                         className="pointer-events-none"
                       >
                         {line.name}
@@ -703,31 +710,106 @@ const CameraView = () => {
                     </g>
                   ))}
                   
-                  {/* Resto del código SVG igual... */}
+                  {/* Línea siendo dibujada */}
+                  {currentLine && currentLine.end && (
+                    <line
+                      x1={currentLine.start.x}
+                      y1={currentLine.start.y}
+                      x2={currentLine.end.x}
+                      y2={currentLine.end.y}
+                      stroke="#FF0000"
+                      strokeWidth="3"
+                      strokeDasharray="5,5"
+                    />
+                  )}
+                  
+                  {/* Zonas guardadas */}
+                  {zones.map((zone) => (
+                    <g key={zone.id}>
+                      <polygon
+                        points={zone.points.map(p => `${p[0]},${p[1]}`).join(' ')}
+                        fill="rgba(255, 0, 0, 0.3)"
+                        stroke="#FF0000"
+                        strokeWidth="3"
+                        strokeDasharray={zone.saved ? "0" : "8,4"}
+                      />
+                      <text
+                        x={zone.points.reduce((sum, p) => sum + p[0], 0) / zone.points.length}
+                        y={zone.points.reduce((sum, p) => sum + p[1], 0) / zone.points.length}
+                        fill="#FFFFFF"
+                        fontSize="14"
+                        fontWeight="bold"
+                        textAnchor="middle"
+                        stroke="#000000"
+                        strokeWidth="1"
+                        className="pointer-events-none"
+                      >
+                        {zone.name}
+                      </text>
+                    </g>
+                  ))}
+                  
+                  {/* Zona siendo dibujada */}
+                  {currentZone.length > 0 && (
+                    <g>
+                      <polygon
+                        points={currentZone.map(p => `${p.x},${p.y}`).join(' ')}
+                        fill="rgba(0, 255, 0, 0.3)"
+                        stroke="#00FF00"
+                        strokeWidth="3"
+                        strokeDasharray="5,5"
+                      />
+                      {currentZone.map((point, index) => (
+                        <circle
+                          key={index}
+                          cx={point.x}
+                          cy={point.y}
+                          r="5"
+                          fill="#00FF00"
+                          stroke="#000000"
+                          strokeWidth="2"
+                        />
+                      ))}
+                    </g>
+                  )}
                 </svg>
               )}
             </div>
           ) : (
-            /* Placeholder cuando no hay stream */
+            /* Placeholder mejorado cuando no hay stream */
             <div className="w-full h-96 bg-gradient-to-br from-gray-700 to-gray-800 rounded-lg flex flex-col items-center justify-center">
               <div className="text-center">
                 <CameraIcon className="h-20 w-20 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-xl font-medium text-gray-300 mb-2">
-                  {streamError ? 'Error de Conexión' : 
-                  systemStatus.camera ? 'Stream No Activo' : 'Cámara No Configurada'}
+                  {streamError ? '🔴 Error de Conexión' : 
+                  systemStatus.camera ? '⏸️ Stream No Activo' : '📷 Cámara No Configurada'}
                 </h3>
                 <p className="text-gray-400 text-sm mb-4">
-                  {streamError ? 'Verifica la configuración RTSP en Configuración de Cámara' :
-                  systemStatus.camera ? 'Presiona "Iniciar Stream" para comenzar' : 
-                  'Configure la cámara en Configuración para comenzar'}
+                  {streamError ? 'Verifica la configuración RTSP y la conectividad de red' :
+                  systemStatus.camera ? 'Presiona "Iniciar Stream" para comenzar la transmisión' : 
+                  'Configure la cámara en "Config. Cámara" para comenzar'}
                 </p>
+                
+                {streamError && (
+                  <button
+                    onClick={() => {
+                      setStreamError(false);
+                      if (imgRef.current) {
+                        imgRef.current.src = `/api/camera/stream?t=${Date.now()}`;
+                      }
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors mr-2"
+                  >
+                    🔄 Reconectar
+                  </button>
+                )}
                 
                 {!systemStatus.camera && (
                   <button
                     onClick={() => window.location.href = '/camera-config'}
                     className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                   >
-                    Ir a Configuración
+                    ⚙️ Ir a Configuración
                   </button>
                 )}
               </div>

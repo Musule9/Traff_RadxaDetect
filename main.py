@@ -448,81 +448,44 @@ async def info():
 # Estado de cámara
 @app.get("/api/camera/status")
 async def get_camera_status():
-    """Obtener estado de la cámara"""
-    if not video_processor:
-        camera_config = load_camera_config()
+    """Obtener estado de la cámara - USANDO CONFIGURACIÓN LIMPIA"""
+    try:
+        # Obtener configuración limpia
+        camera_config = await get_camera_config()
+        
+        # Estado del video processor
+        is_connected = False
+        current_fps = 0
+        
+        if video_processor:
+            is_connected = video_processor.is_running
+            current_fps = video_processor.current_fps
+        
+        return {
+            "connected": is_connected,
+            "fps": current_fps,
+            "rtsp_url": camera_config.get("rtsp_url", ""),
+            "fase": camera_config.get("fase", "fase1"),
+            "direccion": camera_config.get("direccion", "norte"),
+            "controladora_ip": camera_config.get("controladora_ip", ""),
+            "enabled": camera_config.get("enabled", False),
+            "camera_name": camera_config.get("camera_name", ""),
+            "last_check": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo estado de cámara: {e}")
         return {
             "connected": False, 
             "fps": 0,
-            "rtsp_url": camera_config.get("rtsp_url", ""),
-            "fase": camera_config.get("fase", "fase1"),
-            "direccion": camera_config.get("direccion", "norte")
+            "rtsp_url": "",
+            "error": str(e)
         }
-    
-    return {
-        "connected": video_processor.is_running,
-        "fps": video_processor.current_fps,
-        "rtsp_url": video_processor.camera_config.get("rtsp_url", ""),
-        "fase": video_processor.camera_config.get("fase", ""),
-        "direccion": video_processor.camera_config.get("direccion", "")
-    }
 
 # Configuración de cámara
 @app.get("/api/camera/config")
 async def get_camera_config():
-    """Obtener configuración actual de cámara"""
-    try:
-        os.makedirs("/app/config", exist_ok=True)
-        
-        try:
-            with open("/app/config/cameras.json", "r") as f:
-                cameras = json.load(f)
-        except:
-            cameras = {
-                "camera_1": {
-                    "id": "camera_1",
-                    "name": "Cámara Principal",
-                    "rtsp_url": "",
-                    "fase": "fase1",
-                    "direccion": "norte",
-                    "controladora_id": "CTRL_001",
-                    "controladora_ip": "192.168.1.200",
-                    "enabled": False
-                }
-            }
-            with open("/app/config/cameras.json", "w") as f:
-                json.dump(cameras, f, indent=2)
-        
-        for camera in cameras.values():
-            if camera.get("enabled", False):
-                return camera
-        
-        if cameras:
-            return list(cameras.values())[0]
-        
-        return {
-            "rtsp_url": "",
-            "fase": "fase1",
-            "direccion": "norte",
-            "controladora_id": "CTRL_001",
-            "controladora_ip": "192.168.1.200",
-            "enabled": False
-        }
-        
-    except Exception as e:
-        logger.error(f"Error obteniendo configuración de cámara: {e}")
-        return {
-            "rtsp_url": "",
-            "fase": "fase1",
-            "direccion": "norte", 
-            "controladora_id": "CTRL_001",
-            "controladora_ip": "192.168.1.200",
-            "enabled": False
-        }
-
-@app.post("/api/camera/config")
-async def update_camera_config(config: CameraConfig):
-    """Actualizar configuración de cámara"""
+    """Obtener configuración actual de cámara - ESTRUCTURA LIMPIA"""
     try:
         os.makedirs("/app/config", exist_ok=True)
         
@@ -532,35 +495,308 @@ async def update_camera_config(config: CameraConfig):
         except:
             cameras = {}
         
-        if not cameras:
-            cameras = {"camera_1": {"id": "camera_1", "name": "Cámara Principal"}}
+        # Buscar cámara activa o primera disponible
+        active_camera = None
+        for camera_id, camera_data in cameras.items():
+            if camera_data.get("enabled", False):
+                active_camera = camera_data
+                break
         
-        camera_key = list(cameras.keys())[0]
-        cameras[camera_key].update(config.dict())
-        cameras[camera_key]["enabled"] = True
+        if not active_camera and cameras:
+            active_camera = list(cameras.values())[0]
         
+        if not active_camera:
+            # Configuración por defecto LIMPIA
+            return {
+                "rtsp_url": "",
+                "fase": "fase1", 
+                "direccion": "norte",
+                "controladora_id": "CTRL_001",
+                "controladora_ip": "192.168.1.200",
+                "camera_name": "",
+                "camera_model": "",
+                "camera_location": "",
+                "camera_serial": "",
+                "camera_ip": "",
+                "username": "admin",
+                "password": "",
+                "port": "554",
+                "stream_path": "/stream1",
+                "resolution": "1920x1080",
+                "frame_rate": "30",
+                "bitrate": "4000", 
+                "encoding": "H264",
+                "stream_quality": "high",
+                "night_vision": False,
+                "motion_detection": False,
+                "recording_enabled": False,
+                "audio_enabled": False,
+                "detection_zones": True,
+                "speed_calculation": True,
+                "vehicle_counting": True,
+                "license_plate_recognition": False,
+                "enabled": False
+            }
+        
+        # LIMPIAR Y NORMALIZAR configuración existente
+        clean_config = {
+            # Básicos requeridos
+            "rtsp_url": active_camera.get("rtsp_url", ""),
+            "fase": active_camera.get("fase", "fase1"),
+            "direccion": active_camera.get("direccion", "norte"),
+            "controladora_id": active_camera.get("controladora_id", "CTRL_001"),
+            "controladora_ip": active_camera.get("controladora_ip", "192.168.1.200"),
+            
+            # Identificación de cámara
+            "camera_name": active_camera.get("camera_name", ""),
+            "camera_model": active_camera.get("camera_model", ""),
+            "camera_location": active_camera.get("camera_location", ""),
+            "camera_serial": active_camera.get("camera_serial", ""),
+            
+            # Configuración de red
+            "camera_ip": active_camera.get("camera_ip", ""),
+            "username": active_camera.get("username", "admin"),
+            "password": active_camera.get("password", ""),
+            "port": active_camera.get("port", "554"),
+            "stream_path": active_camera.get("stream_path", "/stream1"),
+            
+            # Configuración de video
+            "resolution": active_camera.get("resolution", "1920x1080"),
+            "frame_rate": active_camera.get("frame_rate", "30"),
+            "bitrate": active_camera.get("bitrate", "4000"),
+            "encoding": active_camera.get("encoding", "H264"),
+            "stream_quality": active_camera.get("stream_quality", "high"),
+            
+            # Configuraciones avanzadas
+            "night_vision": active_camera.get("night_vision", False),
+            "motion_detection": active_camera.get("motion_detection", False),
+            "recording_enabled": active_camera.get("recording_enabled", False),
+            "audio_enabled": active_camera.get("audio_enabled", False),
+            
+            # Configuración de análisis
+            "detection_zones": active_camera.get("detection_zones", True),
+            "speed_calculation": active_camera.get("speed_calculation", True),
+            "vehicle_counting": active_camera.get("vehicle_counting", True),
+            "license_plate_recognition": active_camera.get("license_plate_recognition", False),
+            
+            # Estado
+            "enabled": active_camera.get("enabled", False)
+        }
+        
+        return clean_config
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo configuración de cámara: {e}")
+        # Retornar configuración por defecto en caso de error
+        return {
+            "rtsp_url": "",
+            "fase": "fase1",
+            "direccion": "norte", 
+            "controladora_id": "CTRL_001",
+            "controladora_ip": "192.168.1.200",
+            "enabled": False,
+            "error": str(e)
+        }
+
+
+@app.post("/api/camera/config")
+async def update_camera_config(config: CameraConfig):
+    """Actualizar configuración de cámara - LIMPIEZA COMPLETA"""
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        
+        # LIMPIAR configuración existente completamente
+        cameras = {
+            "camera_1": {
+                "id": "camera_1",
+                "name": "Cámara Principal",
+                # ESTRUCTURA LIMPIA - Sin anidamiento confuso
+                **config.dict(),
+                "enabled": True,
+                "last_updated": datetime.now().isoformat()
+            }
+        }
+        
+        # GUARDAR configuración limpia
         with open("/app/config/cameras.json", "w") as f:
             json.dump(cameras, f, indent=2)
         
-        logger.info(f"Configuración de cámara actualizada: {config.dict()}")
+        logger.info(f"✅ Configuración LIMPIA guardada - RTSP: {config.rtsp_url}")
         
+        # REINICIAR video processor con configuración limpia
         global video_processor
-        if video_processor and video_processor.is_running:
-            logger.info("Reiniciando procesador de video con nueva configuración...")
+        
+        # Parar procesador actual
+        if video_processor and hasattr(video_processor, 'is_running') and video_processor.is_running:
+            logger.info("🔄 Parando procesador de video...")
             video_processor.stop_processing()
             await asyncio.sleep(2)
         
-        if video_processor:
-            video_processor.camera_config = config.dict()
-            if config.rtsp_url:
+        # Reinicializar SOLO si hay URL RTSP válida
+        if config.rtsp_url and config.rtsp_url.strip() and MODULES_AVAILABLE:
+            try:
+                logger.info("🚀 Inicializando procesador con configuración LIMPIA...")
+                
+                from app.core.video_processor import VideoProcessor
+                
+                # Usar configuración LIMPIA directamente
+                clean_camera_config = config.dict()
+                system_config = load_system_config()
+                
+                video_processor = VideoProcessor(
+                    camera_config=clean_camera_config,
+                    system_config=system_config,
+                    db_manager=db_manager,
+                    callback_func=controller_callback
+                )
+                
+                await video_processor.initialize()
                 video_processor.start_processing()
-                logger.info("Procesador de video reiniciado exitosamente")
+                
+                logger.info("✅ Procesador iniciado con configuración LIMPIA")
+                
+                # Verificar después de 3 segundos
+                await asyncio.sleep(3)
+                is_running = video_processor.is_running if video_processor else False
+                current_fps = video_processor.current_fps if video_processor else 0
+                
+                logger.info(f"📊 Estado: Running={is_running}, FPS={current_fps}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error inicializando video processor: {e}")
+                video_processor = None
         
-        return {"message": "Configuración actualizada exitosamente", "config": config.dict()}
+        elif not config.rtsp_url or not config.rtsp_url.strip():
+            logger.info("ℹ️ No hay URL RTSP válida - video processor en espera")
+            video_processor = None
+        
+        return {
+            "message": "Configuración actualizada con estructura LIMPIA", 
+            "config": config.dict(),
+            "video_processor_active": video_processor.is_running if video_processor else False,
+            "rtsp_url_configured": bool(config.rtsp_url and config.rtsp_url.strip()),
+            "structure": "clean"  # Indicador de estructura limpia
+        }
         
     except Exception as e:
-        logger.error(f"Error actualizando configuración de cámara: {e}")
+        logger.error(f"❌ Error crítico actualizando configuración: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.post("/api/camera/config/reset")
+async def reset_camera_config():
+    """Resetear configuración de cámara completamente"""
+    try:
+        global video_processor
+        
+        # Parar video processor
+        if video_processor:
+            video_processor.stop_processing()
+            await asyncio.sleep(2)
+            video_processor = None
+        
+        # LIMPIAR archivo completamente
+        clean_config = {
+            "camera_1": {
+                "id": "camera_1", 
+                "name": "Cámara Principal",
+                "rtsp_url": "",
+                "fase": "fase1",
+                "direccion": "norte",
+                "controladora_id": "CTRL_001",
+                "controladora_ip": "192.168.1.200",
+                "camera_name": "",
+                "camera_model": "",
+                "camera_location": "",
+                "camera_serial": "",
+                "camera_ip": "",
+                "username": "admin",
+                "password": "",
+                "port": "554",
+                "stream_path": "/stream1",
+                "resolution": "1920x1080",
+                "frame_rate": "30",
+                "bitrate": "4000",
+                "encoding": "H264",
+                "stream_quality": "high",
+                "night_vision": False,
+                "motion_detection": False,
+                "recording_enabled": False,
+                "audio_enabled": False,
+                "detection_zones": True,
+                "speed_calculation": True,
+                "vehicle_counting": True,
+                "license_plate_recognition": False,
+                "enabled": False,
+                "reset_at": datetime.now().isoformat()
+            }
+        }
+        
+        with open("/app/config/cameras.json", "w") as f:
+            json.dump(clean_config, f, indent=2)
+        
+        logger.info("🧹 Configuración de cámara reseteada completamente")
+        
+        return {
+            "message": "Configuración reseteada exitosamente",
+            "status": "clean",
+            "config": clean_config["camera_1"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error reseteando configuración: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/camera/restart")
+async def restart_camera_processing():
+    """Reiniciar procesamiento de cámara manualmente"""
+    global video_processor
+    
+    try:
+        camera_config = load_camera_config()
+        
+        if not camera_config.get("rtsp_url"):
+            raise HTTPException(status_code=400, detail="No hay URL RTSP configurada")
+        
+        # Parar procesador actual
+        if video_processor:
+            video_processor.stop_processing()
+            await asyncio.sleep(2)
+        
+        # Reinicializar
+        if MODULES_AVAILABLE:
+            from app.core.video_processor import VideoProcessor
+            
+            video_processor = VideoProcessor(
+                camera_config=camera_config,
+                system_config=load_system_config(),
+                db_manager=db_manager,
+                callback_func=controller_callback
+            )
+            
+            await video_processor.initialize()
+            video_processor.start_processing()
+            
+            # Verificar
+            await asyncio.sleep(3)
+            if video_processor.is_running:
+                return {
+                    "message": "Cámara reiniciada exitosamente",
+                    "status": "running",
+                    "fps": video_processor.current_fps
+                }
+            else:
+                return {
+                    "message": "Cámara reiniciada pero no está activa",
+                    "status": "inactive",
+                    "fps": 0
+                }
+        else:
+            raise HTTPException(status_code=500, detail="Módulos de video no disponibles")
+            
+    except Exception as e:
+        logger.error(f"Error reiniciando cámara: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/camera/stream")
 async def get_camera_stream():

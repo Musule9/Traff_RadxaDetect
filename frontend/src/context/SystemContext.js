@@ -1,3 +1,5 @@
+// REEMPLAZAR EN frontend/src/context/SystemContext.js
+
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { apiService } from '../services/api';
 import { toast } from 'react-toastify';
@@ -38,11 +40,11 @@ export const SystemProvider = ({ children }) => {
     try {
       setLoading(true);
 
-      // CORREGIDO: Usar llamadas reales en lugar de simulación
+      // CORREGIDO: Verificación de estado más robusta
       const [statusResponse, configResponse, healthResponse] = await Promise.all([
         apiService.getCameraStatus().catch((err) => {
           console.warn('Error getting camera status:', err);
-          return { connected: false, fps: 0 };
+          return { connected: false, fps: 0, enabled: false };
         }),
         apiService.getSystemConfig().catch((err) => {
           console.warn('Error getting system config:', err);
@@ -50,15 +52,18 @@ export const SystemProvider = ({ children }) => {
         }),
         apiService.getCameraHealth().catch((err) => {
           console.warn('Error getting camera health:', err);
-          return { status: 'unhealthy' };
+          return { status: 'unhealthy', camera_connected: false };
         })
       ]);
 
-      // Actualizar estado del sistema con datos reales
+      // CORREGIDO: Actualizar estado con datos reales y verificación de RTSP
+      const hasRtspUrl = statusResponse.rtsp_url && statusResponse.rtsp_url.trim().length > 0;
+      const isProcessingActive = statusResponse.connected && statusResponse.fps > 0;
+      
       setSystemStatus({
-        camera: statusResponse.connected || false,
-        controller: healthResponse.controller_connected || false, // Agregar al endpoint
-        processing: statusResponse.connected || false,
+        camera: hasRtspUrl && statusResponse.enabled && isProcessingActive,
+        controller: healthResponse.controller_connected || false,
+        processing: isProcessingActive,
         fps: statusResponse.fps || 0
       });
 
@@ -67,9 +72,18 @@ export const SystemProvider = ({ children }) => {
         setConfig(prev => ({ ...prev, ...configResponse }));
       }
 
+      // LOGGING para debug
+      console.log('🔍 System Status Update:', {
+        hasRtspUrl,
+        enabled: statusResponse.enabled,
+        connected: statusResponse.connected,
+        fps: statusResponse.fps,
+        finalCameraStatus: hasRtspUrl && statusResponse.enabled && isProcessingActive
+      });
+
     } catch (error) {
       console.error('Error cargando datos del sistema:', error);
-      // No mostrar toast aquí para evitar spam
+      // Mantener estado anterior en caso de error de red
     } finally {
       setLoading(false);
     }
@@ -77,12 +91,57 @@ export const SystemProvider = ({ children }) => {
 
   const updateCameraConfig = useCallback(async (cameraId, newConfig) => {
     try {
-      await apiService.updateCameraConfig(newConfig);
-      await loadSystemData(); // Recargar datos después de actualizar
-      return true; // Éxito
+      setLoading(true);
+      
+      // CORREGIDO: Verificar que newConfig tiene la estructura correcta
+      const cleanConfig = {
+        rtsp_url: newConfig.rtsp_url || '',
+        fase: newConfig.fase || 'fase1',
+        direccion: newConfig.direccion || 'norte',
+        controladora_id: newConfig.controladora_id || 'CTRL_001',
+        controladora_ip: newConfig.controladora_ip || '192.168.1.200',
+        camera_name: newConfig.camera_name || '',
+        camera_model: newConfig.camera_model || '',
+        camera_location: newConfig.camera_location || '',
+        camera_serial: newConfig.camera_serial || '',
+        camera_ip: newConfig.camera_ip || '',
+        username: newConfig.username || 'admin',
+        password: newConfig.password || '',
+        port: newConfig.port || '554',
+        stream_path: newConfig.stream_path || '/stream1',
+        resolution: newConfig.resolution || '1920x1080',
+        frame_rate: newConfig.frame_rate || '30',
+        bitrate: newConfig.bitrate || '4000',
+        encoding: newConfig.encoding || 'H264',
+        stream_quality: newConfig.stream_quality || 'high',
+        night_vision: newConfig.night_vision || false,
+        motion_detection: newConfig.motion_detection || false,
+        recording_enabled: newConfig.recording_enabled || false,
+        audio_enabled: newConfig.audio_enabled || false,
+        detection_zones: newConfig.detection_zones !== false,
+        speed_calculation: newConfig.speed_calculation !== false,
+        vehicle_counting: newConfig.vehicle_counting !== false,
+        license_plate_recognition: newConfig.license_plate_recognition || false,
+        enabled: true
+      };
+
+      console.log('🔧 Enviando configuración limpia:', cleanConfig);
+      
+      const response = await apiService.updateCameraConfig(cleanConfig);
+      
+      console.log('✅ Respuesta del servidor:', response);
+      
+      // Recargar datos después de 2 segundos para dar tiempo al video processor
+      setTimeout(() => {
+        loadSystemData();
+      }, 2000);
+      
+      return true;
     } catch (error) {
       console.error('Error actualizando configuración:', error);
-      throw error; // Re-lanzar para manejo en el componente
+      throw error;
+    } finally {
+      setLoading(false);
     }
   }, [loadSystemData]);
 
@@ -90,21 +149,53 @@ export const SystemProvider = ({ children }) => {
     try {
       await apiService.updateSystemConfig(newConfig);
       setConfig(prev => ({ ...prev, ...newConfig }));
-      return true; // Éxito
+      return true;
     } catch (error) {
       console.error('Error actualizando configuración del sistema:', error);
-      throw error; // Re-lanzar para manejo en el componente
+      throw error;
     }
   }, []);
 
-  // Cargar datos iniciales
+  // NUEVO: Método para resetear configuración
+  const resetCameraConfig = useCallback(async () => {
+    try {
+      setLoading(true);
+      
+      const response = await fetch('/api/camera/config/reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Error reseteando configuración');
+      }
+      
+      const result = await response.json();
+      console.log('🧹 Configuración reseteada:', result);
+      
+      // Recargar datos
+      await loadSystemData();
+      
+      return true;
+    } catch (error) {
+      console.error('Error reseteando configuración:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadSystemData]);
+
+  // Cargar datos iniciales y configurar polling más frecuente
   useEffect(() => {
     loadSystemData();
     
-    // Actualizar cada 30 segundos
+    // Polling cada 5 segundos para detección de cambios más rápida
     const interval = setInterval(() => {
       loadSystemData();
-    }, 10000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [loadSystemData]);
@@ -118,7 +209,8 @@ export const SystemProvider = ({ children }) => {
     loading,
     loadSystemData,
     updateCameraConfig,
-    updateSystemConfig
+    updateSystemConfig,
+    resetCameraConfig  // NUEVO método
   };
 
   return (
