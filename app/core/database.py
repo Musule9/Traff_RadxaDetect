@@ -86,36 +86,48 @@ class DatabaseManager:
             await db.commit()
     
     async def insert_vehicle_crossing(self, crossing_data: Dict):
-        """Insertar cruce de vehículo"""
+        """Insertar cruce de vehículo con reintentos"""
         db_path = self.get_db_path()
         
-        async with aiosqlite.connect(db_path) as db:
-            await db.execute("""
-                INSERT INTO vehicle_crossings (
-                    vehicle_id, line_id, line_name, fase, semaforo_estado,
-                    velocidad, direccion, No_Controladora, confianza, carril,
-                    clase_vehiculo, bbox_x, bbox_y, bbox_w, bbox_h, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                crossing_data.get('vehicle_id'),
-                crossing_data.get('line_id'),
-                crossing_data.get('line_name'),
-                crossing_data.get('fase'),
-                crossing_data.get('semaforo_estado'),
-                crossing_data.get('velocidad'),
-                crossing_data.get('direccion'),
-                crossing_data.get('No_Controladora'),
-                crossing_data.get('confianza'),
-                crossing_data.get('carril'),
-                crossing_data.get('clase_vehiculo'),
-                crossing_data.get('bbox_x'),
-                crossing_data.get('bbox_y'),
-                crossing_data.get('bbox_w'),
-                crossing_data.get('bbox_h'),
-                json.dumps(crossing_data.get('metadata', {}))
-            ))
-            await db.commit()
-    
+        for attempt in range(3):
+            try:
+                async with aiosqlite.connect(db_path, timeout=10.0) as db:
+                    await db.execute("PRAGMA journal_mode=WAL")
+                    await db.execute("PRAGMA busy_timeout=5000")
+                    
+                    await db.execute("""
+                        INSERT INTO vehicle_crossings (
+                            vehicle_id, line_id, line_name, fase, semaforo_estado,
+                            velocidad, direccion, No_Controladora, confianza, carril,
+                            clase_vehiculo, bbox_x, bbox_y, bbox_w, bbox_h, metadata
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        crossing_data.get('vehicle_id'),
+                        crossing_data.get('line_id'),
+                        crossing_data.get('line_name'),
+                        crossing_data.get('fase'),
+                        crossing_data.get('semaforo_estado'),
+                        crossing_data.get('velocidad'),
+                        crossing_data.get('direccion'),
+                        crossing_data.get('No_Controladora'),
+                        crossing_data.get('confianza'),
+                        crossing_data.get('carril', 'desconocido'),
+                        crossing_data.get('clase_vehiculo'),
+                        crossing_data.get('bbox_x'),
+                        crossing_data.get('bbox_y'),
+                        crossing_data.get('bbox_w'),
+                        crossing_data.get('bbox_h'),
+                        json.dumps(crossing_data.get('metadata', {}))
+                    ))
+                    await db.commit()
+                    return
+                    
+            except Exception as e:
+                if attempt < 2:
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                else:
+                    logger.error(f"Error final insertando cruce: {e}")
+
     async def insert_red_light_cycle(self, cycle_data: Dict):
         """Insertar ciclo de semáforo en rojo"""
         db_path = self.get_db_path()

@@ -82,46 +82,40 @@ const CameraView = () => {
     };
   }, [streamError, isStreamActive]);
 
-  const loadAnalysisConfig = async () => {
-    if (configLoaded) return; // Evitar carga múltiple
+  const loadAnalysisConfig = async (forceReload = false) => {
+    if (configLoaded && !forceReload) return;
     
     setLoading(true);
     try {
-      console.log('🔄 Cargando configuración de análisis...');
+      // Limpiar antes de cargar para evitar duplicados
+      setLines([]);
+      setZones([]);
       
-      // Cargar líneas existentes
-      const linesResponse = await apiService.getLines();
+      const [linesResponse, zonesResponse] = await Promise.all([
+        apiService.getLines(),
+        apiService.getZones()
+      ]);
+      
       if (linesResponse && linesResponse.lines) {
         const loadedLines = Object.values(linesResponse.lines).map(line => ({
-          id: line.id,
-          name: line.name,
-          points: line.points, // Ya están en formato [[x, y], [x, y]]
-          lane: line.lane,
-          line_type: line.line_type,
-          distance_to_next: line.distance_to_next
+          ...line,
+          saved: true
         }));
         setLines(loadedLines);
-        console.log(`✅ ${loadedLines.length} líneas cargadas`);
       }
       
-      // Cargar zonas existentes
-      const zonesResponse = await apiService.getZones();
       if (zonesResponse && zonesResponse.zones) {
         const loadedZones = Object.values(zonesResponse.zones).map(zone => ({
-          id: zone.id,
-          name: zone.name,
-          points: zone.points, // Ya están en formato [[x, y], [x, y], ...]
-          zone_type: zone.zone_type
+          ...zone,
+          saved: true
         }));
         setZones(loadedZones);
-        console.log(`✅ ${loadedZones.length} zonas cargadas`);
       }
       
       setConfigLoaded(true);
-      
     } catch (error) {
-      console.error('❌ Error cargando configuración de análisis:', error);
-      toast.error('Error cargando configuración existente');
+      console.error('Error cargando configuración:', error);
+      toast.error('Error cargando configuración');
     } finally {
       setLoading(false);
     }

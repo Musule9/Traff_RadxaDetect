@@ -43,7 +43,24 @@ class TrafficAnalyzer:
         self.red_light_start_time = None
         self.red_light_vehicles_start = 0
         self.analytic_sent_this_cycle = False
-        
+
+    def cleanup_old_vehicles(self, max_age_seconds: int = 100):
+    """Limpiar vehículos antiguos para evitar memory leak"""
+    current_time = time.time()
+    vehicles_to_remove = []
+    
+    for vehicle_id, crossings in self.vehicle_line_crossings.items():
+        if crossings:
+            last_crossing = max(crossings.values())
+            if current_time - last_crossing > max_age_seconds:
+                vehicles_to_remove.append(vehicle_id)
+    
+    for vehicle_id in vehicles_to_remove:
+        self.vehicle_line_crossings.pop(vehicle_id, None)
+        self.vehicle_lanes.pop(vehicle_id, None)
+        self.vehicle_speeds.pop(vehicle_id, None)
+        self.vehicle_last_line.pop(vehicle_id, None)
+
     def add_line(self, line: Line):
         """Agregar línea de conteo o velocidad"""
         self.lines.append(line)
@@ -113,6 +130,15 @@ class TrafficAnalyzer:
             results['send_analytic'] = True
             self.analytic_sent_this_cycle = True
         
+        # Limpiar vehículos antiguos cada 100 análisis
+        if hasattr(self, '_frame_count'):
+            self._frame_count += 1
+        else:
+            self._frame_count = 0
+
+        if self._frame_count % 100 == 0:
+            self.cleanup_old_vehicles()
+
         return results
     
     def _check_line_crossings(self, vehicle_id: int, center: Tuple[float, float], 
@@ -144,51 +170,71 @@ class TrafficAnalyzer:
         return crossings
     
     def _calculate_speed(self, vehicle_id: int, current_time: float) -> Optional[Dict]:
-        """Calcular velocidad del vehículo entre dos líneas"""
+        """Calcular velocidad del vehículo entre líneas del mismo carril"""
         if vehicle_id not in self.vehicle_line_crossings:
             return None
         
         crossings = self.vehicle_line_crossings[vehicle_id]
+        if len(crossings) < 2:
+            return None
         
-        # Buscar pares de líneas para cálculo de velocidad
-        for line in self.lines:
-            if line.line_type == LineType.COUNTING:
-                # Buscar si tiene línea de velocidad asociada
-                speed_line = None
-                if hasattr(line, 'speed_line_id') and line.speed_line_id:
-                    speed_line = next((l for l in self.lines if l.id == line.speed_line_id), None)
+        # Obtener el carril actual del vehículo
+        current_lane = self.vehicle_lanes.get(vehicle_id)
+        if not current_lane:
+            return None
+        
+        # Buscar pares de líneas en el mismo carril
+        lane_lines = [l for l in self.lines if l.lane == current_lane]
+        
+        for i, line1 in enumerate(lane_lines):
+            if line1.id not in crossings:
+                continue
                 
-                if speed_line and line.id in crossings and speed_line.id in crossings:
-                    time1 = crossings[line.id]
-                    time2 = crossings[speed_line.id]
+            for line2 in lane_lines[i+1:]:
+                if line2.id not in crossings:
+                    continue
+                
+                # Verificar que no hayamos calculado ya esta velocidad
+                speed_key = f"{vehicle_id}_{line1.id}_{line2.id}"
+                if speed_key in self.vehicle_speeds:
+                    continue
+                
+                time1 = crossings[line1.id]
+                time2 = crossings[line2.id]
+                time_diff = abs(time2 - time1)
+                
+                if time_diff < 0.5 or time_diff > 30:  # Validar tiempo razonable
+                    continue
+                
+                # Calcular distancia
+                distance_m = None
+                if line1.line_type == LineType.SPEED and line1.distance_to_next:
+                    distance_m = line1.distance_to_next
+                elif line2.line_type == LineType.SPEED and line2.distance_to_next:
+                    distance_m = line2.distance_to_next
+                else:
+                    # Estimar distancia por defecto
+                    distance_m = 10.0  # 10 metros por defecto
+                
+                if distance_m and distance_m > 0:
+                    speed_ms = distance_m / time_diff
+                    speed_kmh = speed_ms * 3.6
                     
-                    # Verificar si ya calculamos la velocidad para este par
-                    speed_key = f"{vehicle_id}_{line.id}_{speed_line.id}"
-                    if speed_key not in self.vehicle_speeds:
-                        time_diff = abs(time2 - time1)
+                    # Validar velocidad razonable (5-150 km/h)
+                    if 5 <= speed_kmh <= 150:
+                        self.vehicle_speeds[speed_key] = speed_kmh
                         
-                        if time_diff > 0.1:  # Mínimo 0.1 segundos
-                            # Usar la distancia específica de la línea de velocidad si existe
-                            distance_m = speed_line.speed_line_distance if hasattr(speed_line, 'speed_line_distance') and speed_line.speed_line_distance else line.distance_to_next
-                            
-                            if distance_m and distance_m > 0:
-                                speed_ms = distance_m / time_diff
-                                speed_kmh = speed_ms * 3.6
-                                
-                                # Validar velocidad razonable (0-200 km/h)
-                                if 0 < speed_kmh < 200:
-                                    self.vehicle_speeds[speed_key] = speed_kmh
-                                    
-                                    return {
-                                        'vehicle_id': vehicle_id,
-                                        'speed_kmh': speed_kmh,
-                                        'distance_m': distance_m,
-                                        'time_diff': time_diff,
-                                        'lane': line.lane,
-                                        'line1_name': line.name,
-                                        'line2_name': speed_line.name,
-                                        'calculation_type': 'specific_distance' if hasattr(speed_line, 'speed_line_distance') else 'default_distance'
-                                    }
+                        return {
+                            'vehicle_id': vehicle_id,
+                            'speed_kmh': round(speed_kmh, 1),
+                            'distance_m': distance_m,
+                            'time_diff': round(time_diff, 2),
+                            'lane': current_lane,
+                            'line1_id': line1.id,
+                            'line2_id': line2.id,
+                            'line1_name': line1.name,
+                            'line2_name': line2.name
+                        }
         
         return None
 

@@ -293,10 +293,20 @@ class VideoProcessor:
                 if track:
                     # Preparar datos para base de datos
                     calculated_speed = None
+                    speed_info = None
+
                     for speed_calc in results.get('speed_calculations', []):
                         if speed_calc['vehicle_id'] == crossing['vehicle_id']:
                             calculated_speed = speed_calc['speed_kmh']
+                            speed_info = speed_calc
                             break
+
+                    # Si no hay velocidad específica, buscar en el analyzer
+                    if not calculated_speed and hasattr(self.analyzer, 'vehicle_speeds'):
+                        for speed_key, speed_value in self.analyzer.vehicle_speeds.items():
+                            if speed_key.startswith(f"{crossing['vehicle_id']}_"):
+                                calculated_speed = speed_value
+                                break
                     crossing_data = {
                         'vehicle_id': crossing['vehicle_id'],
                         'line_id': crossing['line_id'],

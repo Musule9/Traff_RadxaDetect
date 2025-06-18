@@ -182,22 +182,37 @@ class VehicleDetector:
     
     def enhance_night_vision(self, frame: np.ndarray) -> np.ndarray:
         """Mejorar imagen para visión nocturna"""
-        # Convertir a LAB
-        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        
-        # Aplicar CLAHE al canal L
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        l = clahe.apply(l)
-        
-        # Recombinar canales
-        enhanced = cv2.merge([l, a, b])
-        enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
-        
-        # Ajuste de gamma para mejor visibilidad
-        gamma = 1.2
-        inv_gamma = 1.0 / gamma
-        table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
-        enhanced = cv2.LUT(enhanced, table)
-        
-        return enhanced
+        try:
+            # Convertir a LAB
+            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            
+            # Aplicar CLAHE al canal L con parámetros optimizados
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            l = clahe.apply(l)
+            
+            # Recombinar canales
+            enhanced = cv2.merge([l, a, b])
+            enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+            
+            # Reducción de ruido
+            enhanced = cv2.fastNlMeansDenoisingColored(enhanced, None, 10, 10, 7, 21)
+            
+            # Ajuste de gamma adaptativo
+            mean_brightness = np.mean(enhanced)
+            if mean_brightness < 50:  # Muy oscuro
+                gamma = 2.0
+            elif mean_brightness < 100:  # Oscuro
+                gamma = 1.5
+            else:
+                gamma = 1.2
+                
+            inv_gamma = 1.0 / gamma
+            table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+            enhanced = cv2.LUT(enhanced, table)
+            
+            return enhanced
+            
+        except Exception as e:
+            logger.error(f"Error en mejora nocturna: {e}")
+            return frame  # Retornar frame original si falla
