@@ -112,6 +112,7 @@ function AppContent({ onLogout }) {
         <div className={`flex-1 transition-all duration-300 ${
           sidebarCollapsed ? 'ml-16' : 'ml-64'
         }`}>
+          {/* Header CORREGIDO con props necesarios */}
           <Header
             systemStatus={systemStatus}
             onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -162,4 +163,4 @@ function App() {
   );
 }
 
-export default App;
+export default App

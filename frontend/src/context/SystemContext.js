@@ -38,19 +38,31 @@ export const SystemProvider = ({ children }) => {
     try {
       setLoading(true);
 
-      // Cargar estado del sistema
-      const [statusResponse, configResponse] = await Promise.all([
-        apiService.getCameraStatus().catch(() => ({ connected: false, fps: 0 })),
-        apiService.getSystemConfig().catch(() => ({}))
+      // CORREGIDO: Usar llamadas reales en lugar de simulación
+      const [statusResponse, configResponse, healthResponse] = await Promise.all([
+        apiService.getCameraStatus().catch((err) => {
+          console.warn('Error getting camera status:', err);
+          return { connected: false, fps: 0 };
+        }),
+        apiService.getSystemConfig().catch((err) => {
+          console.warn('Error getting system config:', err);
+          return {};
+        }),
+        apiService.getCameraHealth().catch((err) => {
+          console.warn('Error getting camera health:', err);
+          return { status: 'unhealthy' };
+        })
       ]);
 
+      // Actualizar estado del sistema con datos reales
       setSystemStatus({
         camera: statusResponse.connected || false,
-        controller: Math.random() > 0.3, // Simulado hasta que esté la controladora
+        controller: healthResponse.controller_connected || false, // Agregar al endpoint
         processing: statusResponse.connected || false,
         fps: statusResponse.fps || 0
       });
 
+      // Actualizar configuración si hay datos
       if (Object.keys(configResponse).length > 0) {
         setConfig(prev => ({ ...prev, ...configResponse }));
       }
@@ -66,11 +78,11 @@ export const SystemProvider = ({ children }) => {
   const updateCameraConfig = useCallback(async (cameraId, newConfig) => {
     try {
       await apiService.updateCameraConfig(newConfig);
-      await loadSystemData();
-      toast.success('Configuración de cámara actualizada');
+      await loadSystemData(); // Recargar datos después de actualizar
+      return true; // Éxito
     } catch (error) {
       console.error('Error actualizando configuración:', error);
-      toast.error('Error actualizando configuración');
+      throw error; // Re-lanzar para manejo en el componente
     }
   }, [loadSystemData]);
 
@@ -78,16 +90,23 @@ export const SystemProvider = ({ children }) => {
     try {
       await apiService.updateSystemConfig(newConfig);
       setConfig(prev => ({ ...prev, ...newConfig }));
-      toast.success('Configuración del sistema actualizada');
+      return true; // Éxito
     } catch (error) {
       console.error('Error actualizando configuración del sistema:', error);
-      toast.error('Error actualizando configuración del sistema');
+      throw error; // Re-lanzar para manejo en el componente
     }
   }, []);
 
   // Cargar datos iniciales
   useEffect(() => {
     loadSystemData();
+    
+    // Actualizar cada 30 segundos
+    const interval = setInterval(() => {
+      loadSystemData();
+    }, 10000);
+
+    return () => clearInterval(interval);
   }, [loadSystemData]);
 
   const value = {

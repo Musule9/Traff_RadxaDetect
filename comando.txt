@@ -1,3 +1,7 @@
+#BUILEAR NPM
+npm run build
+rtsp://admin:OscarWilde2016.@10.0.30.53:554/VideoInput/1/h264/1
+
 docker stop vehicle-final 2>/dev/null || true
 docker rm vehicle-final 2>/dev/null || true
 docker build -t vehicle-final .

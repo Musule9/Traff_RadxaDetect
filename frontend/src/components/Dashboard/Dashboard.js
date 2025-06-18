@@ -1,3 +1,5 @@
+// REEMPLAZAR en frontend/src/components/Dashboard/Dashboard.js
+
 import React, { useState, useEffect } from 'react';
 import { 
   CameraIcon, 
@@ -28,21 +30,55 @@ const Dashboard = () => {
 
   const fetchDashboardData = async () => {
     try {
-      // Simular datos para el dashboard
-      // En producción, estos vendrían de la API
+      setLoading(true);
+
+      // CORREGIDO: Usar datos reales en lugar de simulación
+      const [
+        trafficStatus, 
+        cameraStatus,
+        todayData
+      ] = await Promise.all([
+        apiService.getTrafficLightStatus().catch(() => ({ fases: {} })),
+        apiService.getCameraStatus().catch(() => ({ connected: false })),
+        apiService.exportData(
+          new Date().toISOString().split('T')[0].replace(/-/g, '_'),
+          'vehicle'
+        ).catch(() => ({ data: [] }))
+      ]);
+
+      // Calcular estadísticas reales
+      const vehicleData = todayData.data || [];
+      const totalCrossings = vehicleData.length;
+      
+      const speedValues = vehicleData
+        .filter(v => v.velocidad && v.velocidad > 0)
+        .map(v => v.velocidad);
+      
+      const avgSpeed = speedValues.length > 0 
+        ? speedValues.reduce((a, b) => a + b, 0) / speedValues.length 
+        : 0;
+
+      // Estado del semáforo real
+      const cameraConfig = await apiService.getCameraConfig();
+      const currentPhase = cameraConfig.fase || 'fase1';
+      const isRed = trafficStatus.fases?.[currentPhase] || false;
+
       setStats({
-        vehiclesInZone: Math.floor(Math.random() * 5),
-        totalCrossings: Math.floor(Math.random() * 100) + 50,
-        avgSpeed: Math.floor(Math.random() * 20) + 30,
-        trafficLightStatus: Math.random() > 0.7 ? 'rojo' : 'verde'
+        vehiclesInZone: 0, // Se actualizará desde el video processor
+        totalCrossings: totalCrossings,
+        avgSpeed: Math.round(avgSpeed),
+        trafficLightStatus: isRed ? 'rojo' : 'verde'
       });
+
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
+      // Mantener datos anteriores en caso de error
     } finally {
       setLoading(false);
     }
   };
 
+  // Resto del componente igual...
   const StatCard = ({ icon: Icon, title, value, color = "blue", subtitle }) => (
     <div className="bg-gray-800 rounded-lg p-6">
       <div className="flex items-center">
@@ -76,14 +112,14 @@ const Dashboard = () => {
         </div>
       </div>
       
-      {/* Cards de estado */}
+      {/* Cards de estado - USANDO DATOS REALES */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           icon={CameraIcon}
           title="Estado de Cámara"
           value={systemStatus.camera ? 'Conectada' : 'Desconectada'}
           color={systemStatus.camera ? 'green' : 'red'}
-          subtitle={systemStatus.camera ? `${systemStatus.fps} FPS` : 'Verificar configuración'}
+          subtitle={systemStatus.camera ? `${systemStatus.fps || 0} FPS` : 'Verificar configuración'}
         />
 
         <StatCard
@@ -107,11 +143,11 @@ const Dashboard = () => {
           title="Velocidad Promedio"
           value={`${stats.avgSpeed} km/h`}
           color="purple"
-          subtitle="Última hora"
+          subtitle="Promedio del día"
         />
       </div>
 
-      {/* Estado del semáforo */}
+      {/* Estado del semáforo - USANDO DATOS REALES */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-gray-800 rounded-lg p-6">
           <h2 className="text-xl font-semibold text-white mb-4">Estado del Semáforo</h2>
@@ -122,7 +158,7 @@ const Dashboard = () => {
             }`}></div>
             <div>
               <span className="text-white text-lg capitalize">{stats.trafficLightStatus}</span>
-              <p className="text-gray-400 text-sm">Fase actual del semáforo</p>
+              <p className="text-gray-400 text-sm">Estado actual del semáforo</p>
             </div>
           </div>
         </div>
@@ -161,7 +197,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Instrucciones de configuración */}
+      {/* Resto del componente igual... */}
       <div className="bg-gray-800 rounded-lg p-6">
         <h2 className="text-xl font-semibold text-white mb-4">Configuración Inicial</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

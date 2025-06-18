@@ -132,11 +132,47 @@ class LoginRequest(BaseModel):
     password: str
 
 class CameraConfig(BaseModel):
+    # Básicos (originales)
     rtsp_url: str
-    fase: str
-    direccion: str
-    controladora_id: str
-    controladora_ip: str
+    fase: str = "fase1"
+    direccion: str = "norte"
+    controladora_id: str = "CTRL_001"
+    controladora_ip: str = "192.168.1.200"
+    
+    # Identificación de cámara
+    camera_name: Optional[str] = ""
+    camera_model: Optional[str] = ""
+    camera_location: Optional[str] = ""
+    camera_serial: Optional[str] = ""
+    
+    # Configuración de red
+    camera_ip: Optional[str] = ""
+    username: str = "admin"
+    password: Optional[str] = ""
+    port: str = "554"
+    stream_path: str = "/stream1"
+    
+    # Configuración de video
+    resolution: str = "1920x1080"
+    frame_rate: str = "30"
+    bitrate: str = "4000"
+    encoding: str = "H264"
+    stream_quality: str = "high"
+    
+    # Configuraciones avanzadas
+    night_vision: bool = False
+    motion_detection: bool = False
+    recording_enabled: bool = False
+    audio_enabled: bool = False
+    
+    # Configuración de análisis
+    detection_zones: bool = True
+    speed_calculation: bool = True
+    vehicle_counting: bool = True
+    license_plate_recognition: bool = False
+    
+    # Estado
+    enabled: bool = False
 
 class LineConfig(BaseModel):
     id: str
@@ -348,10 +384,57 @@ async def logout(token: str = Depends(verify_token)):
 # Health check con información específica de Radxa Rock 5T
 @app.get("/api/camera_health")
 async def health():
+    """Health check con información completa del sistema"""
+    
+    # Verificar estado de la cámara
+    camera_connected = False
+    camera_fps = 0
+    if video_processor and video_processor.is_running:
+        camera_connected = True
+        camera_fps = video_processor.current_fps
+    
+    # Verificar estado de la controladora
+    controller_connected = False
+    if controller_service:
+        try:
+            status = await controller_service.get_traffic_light_status()
+            controller_connected = status is not None
+        except:
+            controller_connected = False
+    
+    # Información del hardware
+    hardware_info = "Unknown"
+    rknn_available = False
+    
+    try:
+        if os.path.exists("/proc/device-tree/model"):
+            with open("/proc/device-tree/model", "rb") as f:
+                hardware_info = f.read().decode('utf-8', errors='ignore').strip('\x00')
+        
+        # Verificar RKNN
+        rknn_available = os.getenv("USE_RKNN", "0") == "1"
+        if rknn_available:
+            try:
+                from rknnlite.api import RKNNLite
+                rknn_available = True
+            except ImportError:
+                rknn_available = False
+    except:
+        pass
+    
     return {
-        "status": "healthy",
-        "rknn": os.getenv("USE_RKNN", "0") == "1",
-        "frontend": FRONTEND_EXISTS
+        "status": "healthy" if camera_connected else "warning",
+        "timestamp": datetime.now().isoformat(),
+        "camera_connected": camera_connected,
+        "camera_fps": camera_fps,
+        "controller_connected": controller_connected,
+        "processing_active": video_processor.is_running if video_processor else False,
+        "hardware": hardware_info,
+        "rknn_enabled": rknn_available,
+        "modules_available": MODULES_AVAILABLE,
+        "frontend_available": HAS_FRONTEND,
+        "version": "1.0.0",
+        "system_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
 @app.get("/api/info")
