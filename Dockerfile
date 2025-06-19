@@ -26,9 +26,21 @@ COPY . .
 # Instalar dependencias Python básicas
 RUN pip install --no-cache-dir -r requirements.txt
 
-# INSTALACIÓN DE RKNN TOOLKIT LITE (para Radxa Rock 5T)
-RUN echo "🔧 Instalando RKNN Toolkit Lite..." && \
-    pip install --no-cache-dir rknn-toolkit-lite2 || \
+# Instalar Ultralytics actualizado con soporte RKNN
+RUN pip install --no-cache-dir ultralytics>=8.3.0
+
+RUN apt-get update && apt-get install -y \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Descargar e instalar las librerías RKNN para RK3588
+RUN cd /tmp && \
+    wget https://github.com/airockchip/rknn-toolkit2/raw/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so && \
+    cp librknnrt.so /usr/lib/ && \
+    ldconfig
+
+# Instalar RKNN Toolkit Lite2
+RUN pip install --no-cache-dir rknn-toolkit-lite2==2.3.2 || \
     pip install --no-cache-dir rknn-toolkit2 || \
     echo "⚠️ RKNN no instalado - continuando sin soporte RKNN"
 

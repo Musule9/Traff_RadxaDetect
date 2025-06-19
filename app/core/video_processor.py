@@ -354,7 +354,7 @@ class VideoProcessor:
             
             rtsp_url = self.camera_config.get('rtsp_url')
             self.video_capture = cv2.VideoCapture(rtsp_url)
-            self.video_capture.set(cv2.CAP_PROP_BUFFER_SIZE, 1)
+            #self.video_capture.set(cv2.CAP_PROP_BUFFER_SIZE, 1)
             
             if self.video_capture.isOpened():
                 logger.info("Stream RTSP reconectado exitosamente")

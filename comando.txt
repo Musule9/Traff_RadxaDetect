@@ -5,13 +5,60 @@ sudo apt install rknpu2-rk3588 python3-rknnlite2
 
 #BUILEAR NPM
 npm run build
+sudo route add -net 10.0.30.0 netmask 255.255.255.0 gw 192.168.0.233
 rtsp://admin:OscarWilde2016.@10.0.30.53:554/VideoInput/1/h264/1
 
-docker stop vehicle-final 2>/dev/null || true
-docker rm vehicle-final 2>/dev/null || true
-docker build -t vehicle-final .
-docker run -d --name vehicle-final --privileged -p 8000:8000 -v /dev:/dev -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro --device=/dev/dri --device=/dev/mali0 -e USE_RKNN=1 vehicle-final
+docker stop vehicle-detection-rknn 2>/dev/null || true
+docker rm vehicle-detection-rknn 2>/dev/null || true
+docker build -t vehicle-detection-rknn .
+docker run -d --name vehicle-detection-rknn --privileged -p 8000:8000 -v /dev:/dev -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro --device=/dev/dri --device=/dev/mali0 -e USE_RKNN=1 vehicle-final
 
 # Test
 sleep 5
 curl http://localhost:8000/api/camera_healthpip install ultralytics --break-system-packages
+
+
+#Install rtsp
+sudo apt-get update
+sudo apt-get install build-essential cmake git libdrm-dev librga-dev librockchip-mpp-dev libsdl2*-dev libx264-dev libx265-dev pkg-config
+
+git clone https://github.com/nyanmisaka/ffmpeg-rockchip
+pushd ffmpeg-rockchip/
+./configure --prefix=/usr --enable-gpl --enable-version3 --enable-libdrm --enable-rkmpp --enable-rkrga --enable-libx264 --enable-libx265 --enable-ffplay
+make -j$(nproc)
+sudo make install
+popd
+
+
+# 1. Limpiar instalación anterior
+chmod +x cleanup_script.sh
+./cleanup_script.sh
+
+# 2. Build con nuevas configuraciones
+docker build --no-cache -t vehicle-detection-rknn .
+
+# 3. Ejecutar con privilegios necesarios para NPU
+docker run -d \
+  --name vehicle-detection-rknn \
+  --restart unless-stopped \
+  --privileged \
+  -p 8000:8000 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/config:/app/config \
+  -v $(pwd)/models:/app/models \
+  -v $(pwd)/logs:/app/logs \
+  -v /dev:/dev \
+  -v /sys:/sys:ro \
+  -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro \
+  --device=/dev/dri:/dev/dri \
+  --device=/dev/mali0:/dev/mali0 \
+  --device=/dev/dma_heap:/dev/dma_heap \
+  --device=/dev/rga:/dev/rga \
+  --device=/dev/mpp_service:/dev/mpp_service \
+  -e USE_RKNN=1 \
+  -e PYTHONPATH=/app \
+  vehicle-detection-rknn
+
+# 4. Verificar funcionamiento
+sleep 10
+curl http://localhost:8000/api/camera_health
