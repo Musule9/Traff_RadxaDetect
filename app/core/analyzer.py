@@ -38,6 +38,8 @@ class TrafficAnalyzer:
         self.zones: List[Zone] = []
         self.vehicle_line_crossings = {}  # {vehicle_id: {line_id: timestamp}}
         self.vehicle_speeds = {}  # {vehicle_id: speed_kmh}
+        self.vehicle_lanes = {}  # FALTA
+        self.vehicle_last_line = {}  # FALTA
         self.red_light_active = False
         self.vehicles_in_red_zone = set()
         self.red_light_start_time = None
@@ -45,7 +47,7 @@ class TrafficAnalyzer:
         self.analytic_sent_this_cycle = False
 
     def cleanup_old_vehicles(self, max_age_seconds: int = 100):
-        """Limpiar vehículos antiguos para evitar memory leak"""
+        """Limpiar vehículos antiguos para evitar memory leak - VERSIÓN CORREGIDA"""
         current_time = time.time()
         vehicles_to_remove = []
         
@@ -57,9 +59,13 @@ class TrafficAnalyzer:
         
         for vehicle_id in vehicles_to_remove:
             self.vehicle_line_crossings.pop(vehicle_id, None)
-            self.vehicle_lanes.pop(vehicle_id, None)
-            self.vehicle_speeds.pop(vehicle_id, None)
-            self.vehicle_last_line.pop(vehicle_id, None)
+            # ✅ VERIFICAR EXISTENCIA ANTES DE ELIMINAR:
+            if hasattr(self, 'vehicle_lanes'):
+                self.vehicle_lanes.pop(vehicle_id, None)
+            if hasattr(self, 'vehicle_speeds'):
+                self.vehicle_speeds.pop(vehicle_id, None)
+            if hasattr(self, 'vehicle_last_line'):
+                self.vehicle_last_line.pop(vehicle_id, None)
 
     def add_line(self, line: Line):
         """Agregar línea de conteo o velocidad"""
@@ -141,6 +147,15 @@ class TrafficAnalyzer:
 
         return results
     
+    def _update_vehicle_lane(self, vehicle_id: int, line_id: str):
+        """Actualizar carril del vehículo basado en línea cruzada"""
+        if vehicle_id not in self.vehicle_lanes:
+            # Encontrar la línea y asignar su carril
+            for line in self.lines:
+                if line.id == line_id:
+                    self.vehicle_lanes[vehicle_id] = line.lane
+                    break
+
     def _check_line_crossings(self, vehicle_id: int, center: Tuple[float, float], 
                             current_time: float) -> List[Dict]:
         """Verificar si vehículo cruza líneas"""
@@ -158,6 +173,8 @@ class TrafficAnalyzer:
                 if line_id not in self.vehicle_line_crossings[vehicle_id]:
                     self.vehicle_line_crossings[vehicle_id][line_id] = current_time
                     
+                    self._update_vehicle_lane(vehicle_id, line_id)
+
                     crossings.append({
                         'vehicle_id': vehicle_id,
                         'line_id': line_id,

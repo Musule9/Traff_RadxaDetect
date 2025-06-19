@@ -51,7 +51,7 @@ class VideoProcessor:
         """Inicializar todos los componentes"""
         try:
             # Inicializar detector
-            model_path = self.system_config.get('model_path', '/app/models/yolov8n.rknn')
+            model_path = self.system_config.get('model_path', '/app/models/yolo11n-rk3588.rknn')
             confidence = self.system_config.get('confidence_threshold', 0.5)
             self.detector = VehicleDetector(model_path, confidence)
             
@@ -333,15 +333,14 @@ class VideoProcessor:
                     await self.db_manager.insert_vehicle_crossing(crossing_data)
             
             # Enviar analítico si es necesario
-            if results['send_analytic'] and self.callback_func:
+            if results['send_analytic'] and self.callback_func is not None:
                 analytic_data = {
                     'fase': self.camera_config.get('fase', 'fase1'),
                     'puntos': len(results['vehicles_in_red_zone']),
                     'vehiculos': True
                 }
-                
                 await self.callback_func('send_analytic', analytic_data)
-            
+        
         except Exception as e:
             logger.error(f"Error procesando resultados: {e}")
     
