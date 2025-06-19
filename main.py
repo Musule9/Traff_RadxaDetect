@@ -11,7 +11,6 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
-import uvicorn
 from pydantic import BaseModel
 from loguru import logger
 import cv2
@@ -21,49 +20,21 @@ import time
 import sys
 from pathlib import Path
 
-
 # ============================================================================
-# CONFIGURACIÓN DE LOGGING CORREGIDA
+# CONFIGURACIÓN DE LOGGING
 # ============================================================================
 def setup_logging():
-    """Configurar sistema de logging"""
     log_level = os.getenv('LOG_LEVEL', 'info').lower()
-    
-    # Mapear niveles válidos para uvicorn
-    valid_levels = {
-        'debug': 'debug',
-        'info': 'info', 
-        'warning': 'warning',
-        'error': 'error',
-        'critical': 'critical'
-    }
-    
-    # Usar nivel válido o por defecto 'info'
-    uvicorn_level = valid_levels.get(log_level, 'info')
-    
     logger.remove()
-    
     os.makedirs("/app/logs", exist_ok=True)
-    logger.add(
-        "/app/logs/app.log",
-        rotation="10 MB",
-        retention="7 days",
-        level=log_level.upper(),
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}"
-    )
-    
-    logger.add(
-        sys.stdout,
-        level=log_level.upper(),
-        format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}"
-    )
-    
-    return uvicorn_level
+    logger.add("/app/logs/app.log", rotation="10 MB", retention="7 days", level=log_level.upper())
+    logger.add(sys.stdout, level=log_level.upper(), format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}")
+    return log_level
 
 LOG_LEVEL = setup_logging()
 
 # ============================================================================
-# IMPORTAR MÓDULOS DE LA APLICACIÓN CON MANEJO ROBUSTO DE ERRORES
+# IMPORTAR MÓDULOS CON MANEJO DE ERRORES
 # ============================================================================
 video_processor = None
 db_manager = None
@@ -72,107 +43,56 @@ controller_service = None
 MODULES_AVAILABLE = False
 
 def import_app_modules():
-    """Importar módulos de la aplicación con manejo robusto de errores"""
     global video_processor, db_manager, auth_service, controller_service, MODULES_AVAILABLE
-    
     try:
-        # Verificar que los archivos existen
-        required_files = [
-            "/app/app/__init__.py",
-            "/app/app/core/__init__.py", 
-            "/app/app/core/database.py",
-            "/app/app/services/__init__.py",
-            "/app/app/services/auth_service.py"
-        ]
-        
-        missing_files = []
-        for file_path in required_files:
-            if not os.path.exists(file_path):
-                missing_files.append(file_path)
-        
-        if missing_files:
-            logger.error(f"❌ Archivos faltantes: {missing_files}")
-            logger.warning("🔄 Continuando con funcionalidad básica...")
-            return False
-        
-        # Importar módulos principales
         from app.core.database import DatabaseManager
         from app.services.auth_service import AuthService
         from app.services.controller_service import ControllerService
         
-        # Inicializar servicios básicos
         db_manager = DatabaseManager()
         auth_service = AuthService()
         controller_service = ControllerService()
-        
-        # Intentar importar video processor (específico para Radxa + RKNN)
-        try:
-            from app.core.video_processor import VideoProcessor
-            logger.info("✅ VideoProcessor con soporte RKNN disponible")
-        except ImportError as e:
-            logger.warning(f"⚠️ VideoProcessor no disponible: {e}")
-        
         MODULES_AVAILABLE = True
         logger.info("✅ Módulos de aplicación cargados correctamente")
         return True
-        
     except Exception as e:
         logger.error(f"❌ Error importando módulos: {e}")
-        logger.info("🔄 Continuando con funcionalidad básica...")
         return False
 
-# Intentar importar módulos al inicio
 import_app_modules()
 
 # ============================================================================
-# MODELOS PYDANTIC (MANTIENEN TODA LA FUNCIONALIDAD)
+# MODELOS PYDANTIC SIMPLIFICADOS
 # ============================================================================
 class LoginRequest(BaseModel):
     username: str
     password: str
 
 class CameraConfig(BaseModel):
-    # Básicos (originales)
+    # Configuración básica RTSP
     rtsp_url: str
     fase: str = "fase1"
     direccion: str = "norte"
     controladora_id: str = "CTRL_001"
     controladora_ip: str = "192.168.1.200"
     
-    # Identificación de cámara
+    # Identificación
     camera_name: Optional[str] = ""
-    camera_model: Optional[str] = ""
     camera_location: Optional[str] = ""
-    camera_serial: Optional[str] = ""
     
-    # Configuración de red
+    # Red
     camera_ip: Optional[str] = ""
     username: str = "admin"
     password: Optional[str] = ""
     port: str = "554"
     stream_path: str = "/stream1"
     
-    # Configuración de video
+    # Video
     resolution: str = "1920x1080"
     frame_rate: str = "30"
-    bitrate: str = "4000"
-    encoding: str = "H264"
-    stream_quality: str = "high"
-    
-    # Configuraciones avanzadas
-    night_vision: bool = False
-    motion_detection: bool = False
-    recording_enabled: bool = False
-    audio_enabled: bool = False
-    
-    # Configuración de análisis
-    detection_zones: bool = True
-    speed_calculation: bool = True
-    vehicle_counting: bool = True
-    license_plate_recognition: bool = False
     
     # Estado
-    enabled: bool = False
+    enabled: bool = True
 
 class LineConfig(BaseModel):
     id: str
@@ -181,10 +101,6 @@ class LineConfig(BaseModel):
     lane: str
     line_type: str
     distance_to_next: Optional[float] = None
-    speed_line_id: Optional[str] = None
-    counting_line_id: Optional[str] = None
-    speed_line_distance: Optional[float] = None
-    direction: Optional[str] = None
 
 class ZoneConfig(BaseModel):
     id: str
@@ -192,177 +108,306 @@ class ZoneConfig(BaseModel):
     points: List[List[int]]
     zone_type: str = "red_light"
 
-class SystemConfig(BaseModel):
-    confidence_threshold: float = 0.5
-    night_vision_enhancement: bool = True
-    show_overlay: bool = True
-    data_retention_days: int = 30
-    target_fps: int = 30
-    log_level: str = "INFO"
-
 # ============================================================================
-# FUNCIONES AUXILIARES (MANTIENEN FUNCIONALIDAD ESPECÍFICA RADXA)
+# FUNCIONES DE CONFIGURACIÓN SIMPLIFICADAS
 # ============================================================================
-def load_system_config() -> Dict:
-    """Cargar configuración del sistema"""
-    try:
-        with open("/app/config/system.json", "r") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error cargando configuración del sistema: {e}")
-        return {
-            "confidence_threshold": 0.5,
-            "night_vision_enhancement": True,
-            "show_overlay": True,
-            "data_retention_days": 30,
-            "target_fps": 30,
-            "use_rknn": True,
-            "hardware": "radxa-rock-5t"
-        }
+def get_config_file_path():
+    """Obtener ruta del archivo de configuración"""
+    return "/app/config/camera_config.json"
 
 def load_camera_config() -> Dict:
-    """Cargar configuración de cámara"""
+    """Cargar configuración de cámara - SIMPLIFICADO"""
+    config_file = get_config_file_path()
     try:
-        with open("/app/config/cameras.json", "r") as f:
-            cameras = json.load(f)
-            for camera in cameras.values():
-                if camera.get("enabled", False):
-                    return camera
-            return {}
+        if os.path.exists(config_file):
+            with open(config_file, "r") as f:
+                config = json.load(f)
+                logger.info(f"📄 Configuración cargada: RTSP={bool(config.get('rtsp_url'))}")
+                return config
     except Exception as e:
-        logger.error(f"Error cargando configuración de cámaras: {e}")
-        return {
-            "rtsp_url": "",
-            "fase": "fase1",
-            "direccion": "norte",
-            "enabled": False,
-            "lane_detection": True,
-            "speed_calculation": True,
-            "red_zone_detection": True
-        }
+        logger.error(f"Error cargando configuración: {e}")
+    
+    # Configuración por defecto
+    default_config = {
+        "rtsp_url": "",
+        "fase": "fase1",
+        "direccion": "norte",
+        "controladora_id": "CTRL_001",
+        "controladora_ip": "192.168.1.200",
+        "camera_name": "",
+        "camera_location": "",
+        "camera_ip": "",
+        "username": "admin",
+        "password": "",
+        "port": "554",
+        "stream_path": "/stream1",
+        "resolution": "1920x1080",
+        "frame_rate": "30",
+        "enabled": False
+    }
+    return default_config
 
-async def controller_callback(action: str, data: Dict):
-    """Callback para comunicación con controladora TICSA"""
-    if action == "send_analytic" and controller_service:
-        await controller_service.send_analytic(data)
+def save_camera_config(config: Dict) -> bool:
+    """Guardar configuración de cámara - SIMPLIFICADO"""
+    config_file = get_config_file_path()
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        
+        # Agregar timestamp
+        config["last_updated"] = datetime.now().isoformat()
+        
+        with open(config_file, "w") as f:
+            json.dump(config, f, indent=2)
+        
+        logger.info(f"✅ Configuración guardada: {config_file}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error guardando configuración: {e}")
+        return False
 
 # ============================================================================
-# LIFESPAN MANAGER (NUEVO SISTEMA SIN DEPRECATION WARNINGS)
+# GESTOR DE VIDEO PROCESSOR SIMPLIFICADO
 # ============================================================================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Gestor de ciclo de vida de la aplicación - SIN DEPRECATION WARNINGS"""
+# ============================================================================
+# GESTOR DE VIDEO PROCESSOR SIMPLIFICADO
+# ============================================================================
+class SimpleVideoStream:
+    """Stream de video básico sin IA para cuando no hay modelos disponibles"""
+    
+    def __init__(self, rtsp_url):
+        self.rtsp_url = rtsp_url
+        self.is_running = False
+        self.current_fps = 0
+        self.latest_frame = None
+        self.capture_thread = None
+        self.frame_lock = threading.Lock()
+        
+    def start_processing(self):
+        """Iniciar captura de video"""
+        if self.is_running:
+            return
+            
+        self.is_running = True
+        self.capture_thread = threading.Thread(target=self._capture_loop)
+        self.capture_thread.daemon = True
+        self.capture_thread.start()
+        logger.info(f"✅ Stream básico iniciado: {self.rtsp_url}")
+    
+    def stop_processing(self):
+        """Detener captura de video"""
+        self.is_running = False
+        if self.capture_thread:
+            self.capture_thread.join(timeout=5)
+        logger.info("⏹️ Stream básico detenido")
+    
+    def _capture_loop(self):
+        """Loop de captura de video"""
+        cap = cv2.VideoCapture(self.rtsp_url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        if not cap.isOpened():
+            logger.error(f"❌ No se pudo abrir stream: {self.rtsp_url}")
+            self.is_running = False
+            return
+        
+        fps_counter = 0
+        fps_time = time.time()
+        
+        while self.is_running:
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                with self.frame_lock:
+                    self.latest_frame = frame.copy()
+                
+                # Calcular FPS
+                fps_counter += 1
+                current_time = time.time()
+                if current_time - fps_time >= 1.0:
+                    self.current_fps = fps_counter
+                    fps_counter = 0
+                    fps_time = current_time
+                
+            else:
+                logger.warning("⚠️ No se pudo leer frame del stream")
+                time.sleep(0.1)
+        
+        cap.release()
+    
+    def get_latest_frame(self):
+        """Obtener último frame capturado"""
+        with self.frame_lock:
+            return self.latest_frame.copy() if self.latest_frame is not None else None
+
+async def restart_video_processor():
+    """Reiniciar video processor con nueva configuración - CON FALLBACK"""
     global video_processor
     
     try:
-        logger.info("🚀 Iniciando servicios del sistema...")
+        # Parar procesador actual
+        if video_processor:
+            if hasattr(video_processor, 'stop_processing'):
+                video_processor.stop_processing()
+            await asyncio.sleep(2)
+            video_processor = None
         
-        # Detectar hardware Radxa Rock 5T
-        hardware_info = "Unknown"
-        if os.path.exists("/proc/device-tree/model"):
-            with open("/proc/device-tree/model", "rb") as f:
-                hardware_info = f.read().decode('utf-8', errors='ignore').strip('\x00')
+        # Cargar configuración
+        camera_config = load_camera_config()
         
-        logger.info(f"📋 Hardware detectado: {hardware_info}")
+        # Solo inicializar si hay URL RTSP válida
+        if not camera_config.get("rtsp_url") or not camera_config.get("rtsp_url").strip():
+            logger.info("⏸️ No hay URL RTSP - video processor en espera")
+            return False
         
-        # Inicializar base de datos si está disponible
-        if db_manager:
-            await db_manager.init_daily_database()
-            logger.info("✅ Base de datos SQLite inicializada")
+        rtsp_url = camera_config.get("rtsp_url")
         
-        # Inicializar video processor con soporte RKNN para Radxa Rock 5T
+        # Intentar importar e inicializar VideoProcessor completo
         if MODULES_AVAILABLE:
             try:
                 from app.core.video_processor import VideoProcessor
-                camera_config = load_camera_config()
+                
                 system_config = load_system_config()
                 
                 video_processor = VideoProcessor(
                     camera_config=camera_config,
                     system_config=system_config,
                     db_manager=db_manager,
-                    callback_func=controller_callback
+                    callback_func=None
                 )
                 
                 await video_processor.initialize()
+                video_processor.start_processing()
                 
-                if camera_config.get("rtsp_url"):
-                    video_processor.start_processing()
-                    logger.info("✅ Procesamiento de video con RKNN iniciado")
+                # Verificar que se inició correctamente
+                await asyncio.sleep(3)
+                
+                if hasattr(video_processor, 'is_running') and video_processor.is_running:
+                    logger.info("✅ Video processor completo iniciado correctamente")
+                    return True
                 else:
-                    logger.info("⚠️ URL RTSP no configurada - esperando configuración")
+                    logger.warning("⚠️ Video processor completo falló, usando stream básico")
+                    raise Exception("VideoProcessor no se inició correctamente")
                     
             except Exception as e:
-                logger.warning(f"⚠️ Video processor no disponible: {e}")
-                logger.info("🔄 Sistema funcionará sin procesamiento de video")
+                logger.warning(f"⚠️ Error con VideoProcessor completo: {e}")
+                logger.info("🔄 Intentando con stream básico...")
+                
+                # Fallback a stream básico
+                try:
+                    video_processor = SimpleVideoStream(rtsp_url)
+                    video_processor.start_processing()
+                    
+                    # Verificar que funciona
+                    await asyncio.sleep(2)
+                    if video_processor.is_running:
+                        logger.info("✅ Stream básico iniciado correctamente (sin IA)")
+                        return True
+                    else:
+                        logger.error("❌ Stream básico también falló")
+                        video_processor = None
+                        return False
+                        
+                except Exception as e2:
+                    logger.error(f"❌ Error con stream básico: {e2}")
+                    video_processor = None
+                    return False
+        else:
+            # Usar directamente stream básico si no hay módulos
+            logger.info("ℹ️ Módulos no disponibles, usando stream básico")
+            try:
+                video_processor = SimpleVideoStream(rtsp_url)
+                video_processor.start_processing()
+                
+                await asyncio.sleep(2)
+                if video_processor.is_running:
+                    logger.info("✅ Stream básico iniciado correctamente")
+                    return True
+                else:
+                    logger.error("❌ Stream básico falló")
+                    video_processor = None
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"❌ Error con stream básico: {e}")
+                video_processor = None
+                return False
+            
+    except Exception as e:
+        logger.error(f"❌ Error crítico en restart_video_processor: {e}")
+        video_processor = None
+        return False
+
+def get_video_processor_status():
+    """Obtener estado del video processor"""
+    if not video_processor:
+        return {"running": False, "fps": 0, "error": "No inicializado"}
+    
+    try:
+        is_running = getattr(video_processor, 'is_running', False)
+        fps = getattr(video_processor, 'current_fps', 0)
         
-        # Tareas en background para sistema completo
-        asyncio.create_task(daily_cleanup_task())
-        if MODULES_AVAILABLE:
-            asyncio.create_task(traffic_light_update_task())
+        return {
+            "running": is_running,
+            "fps": fps,
+            "error": None if is_running else "No procesando"
+        }
+    except Exception as e:
+        return {"running": False, "fps": 0, "error": str(e)}
+
+# ============================================================================
+# CREAR APLICACIÓN FASTAPI
+# ============================================================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gestor de ciclo de vida"""
+    try:
+        logger.info("🚀 Iniciando servicios...")
         
-        logger.info("✅ Sistema completo inicializado correctamente")
-        logger.info("🌐 API disponible en puerto 8000")
+        # Inicializar base de datos
+        if db_manager:
+            await db_manager.init_daily_database()
         
+        # Intentar inicializar video processor si hay configuración
+        camera_config = load_camera_config()
+        if camera_config.get("rtsp_url") and camera_config.get("rtsp_url").strip():
+            await restart_video_processor()
+        
+        logger.info("✅ Sistema inicializado")
         yield
         
     except Exception as e:
         logger.error(f"Error en inicialización: {e}")
         yield
     finally:
-        # Limpieza al cerrar
-        if video_processor:
+        if video_processor and hasattr(video_processor, 'stop_processing'):
             video_processor.stop_processing()
-        if controller_service:
-            await controller_service.close()
         logger.info("🔽 Servicios finalizados")
 
-# ============================================================================
-# CREAR APLICACIÓN FASTAPI (SIN DEPRECATION WARNINGS)
-# ============================================================================
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
-# Middleware CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://0.0.0.0:8000"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # Seguridad
 security = HTTPBearer()
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verificar token de autenticación"""
     if not auth_service or not auth_service.verify_token(credentials.credentials):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise HTTPException(status_code=401, detail="Token inválido")
     return credentials.credentials
 
 # ============================================================================
-# CONFIGURACIÓN DE FRONTEND COMPLETO
-# ============================================================================
-if os.path.exists("/app/frontend/build"):
-    app.mount("/static", StaticFiles(directory="/app/frontend/build/static"), name="static")
-
-# ============================================================================
-# RUTAS DE API COMPLETAS (MANTIENEN TODA LA FUNCIONALIDAD)
+# RUTAS DE API CORREGIDAS
 # ============================================================================
 
 # Autenticación
 @app.post("/api/auth/login")
 async def login(request: LoginRequest):
-    """Iniciar sesión"""
     if not auth_service:
         if request.username == "admin" and request.password == "admin123":
             return {"token": "development_token", "message": "Login exitoso"}
@@ -376,439 +421,255 @@ async def login(request: LoginRequest):
 
 @app.post("/api/auth/logout")
 async def logout(token: str = Depends(verify_token)):
-    """Cerrar sesión"""
     if auth_service:
         auth_service.revoke_token(token)
     return {"message": "Logout exitoso"}
 
-# Health check con información específica de Radxa Rock 5T
+# Health check
 @app.get("/api/camera_health")
 async def health():
-    """Health check con información completa del sistema"""
-    
-    # Verificar estado de la cámara
-    camera_connected = False
-    camera_fps = 0
-    if video_processor and video_processor.is_running:
-        camera_connected = True
-        camera_fps = video_processor.current_fps
-    
-    # Verificar estado de la controladora
-    controller_connected = False
-    if controller_service:
-        try:
-            status = await controller_service.get_traffic_light_status()
-            controller_connected = status is not None
-        except:
-            controller_connected = False
+    """Health check completo"""
+    camera_config = load_camera_config()
+    video_status = get_video_processor_status()
     
     # Información del hardware
     hardware_info = "Unknown"
-    rknn_available = False
-    
     try:
         if os.path.exists("/proc/device-tree/model"):
             with open("/proc/device-tree/model", "rb") as f:
                 hardware_info = f.read().decode('utf-8', errors='ignore').strip('\x00')
-        
-        # Verificar RKNN
-        rknn_available = os.getenv("USE_RKNN", "0") == "1"
-        if rknn_available:
-            try:
-                from rknnlite.api import RKNNLite
-                rknn_available = True
-            except ImportError:
-                rknn_available = False
     except:
         pass
     
     return {
-        "status": "healthy" if camera_connected else "warning",
+        "status": "healthy" if video_status["running"] else "warning",
         "timestamp": datetime.now().isoformat(),
-        "camera_connected": camera_connected,
-        "camera_fps": camera_fps,
-        "controller_connected": controller_connected,
-        "processing_active": video_processor.is_running if video_processor else False,
+        "camera_connected": video_status["running"],
+        "camera_fps": video_status["fps"],
+        "camera_configured": bool(camera_config.get("rtsp_url")),
         "hardware": hardware_info,
-        "rknn_enabled": rknn_available,
         "modules_available": MODULES_AVAILABLE,
-        "frontend_available": HAS_FRONTEND,
-        "version": "1.0.0",
-        "system_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "version": "1.0.0"
     }
 
-@app.get("/api/info")
-async def info():
-    return {
-        "name": "Vehicle Detection System",
-        "version": "1.0.0",
-        "rknn_enabled": os.getenv("USE_RKNN", "0") == "1"
-    }
-
-# Estado de cámara
-@app.get("/api/camera/status")
-async def get_camera_status():
-    """Obtener estado de la cámara - USANDO CONFIGURACIÓN LIMPIA"""
-    try:
-        # Obtener configuración limpia
-        camera_config = await get_camera_config()
-        
-        # Estado del video processor
-        is_connected = False
-        current_fps = 0
-        
-        if video_processor:
-            is_connected = video_processor.is_running
-            current_fps = video_processor.current_fps
-        
-        return {
-            "connected": is_connected,
-            "fps": current_fps,
-            "rtsp_url": camera_config.get("rtsp_url", ""),
-            "fase": camera_config.get("fase", "fase1"),
-            "direccion": camera_config.get("direccion", "norte"),
-            "controladora_ip": camera_config.get("controladora_ip", ""),
-            "enabled": camera_config.get("enabled", False),
-            "camera_name": camera_config.get("camera_name", ""),
-            "last_check": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error obteniendo estado de cámara: {e}")
-        return {
-            "connected": False, 
-            "fps": 0,
-            "rtsp_url": "",
-            "error": str(e)
-        }
-
-# Configuración de cámara
+# CONFIGURACIÓN DE CÁMARA - CORREGIDA
 @app.get("/api/camera/config")
-async def get_camera_config():
-    """Obtener configuración actual de cámara - ESTRUCTURA LIMPIA"""
-    try:
-        os.makedirs("/app/config", exist_ok=True)
-        
-        try:
-            with open("/app/config/cameras.json", "r") as f:
-                cameras = json.load(f)
-        except:
-            cameras = {}
-        
-        # Buscar cámara activa o primera disponible
-        active_camera = None
-        for camera_id, camera_data in cameras.items():
-            if camera_data.get("enabled", False):
-                active_camera = camera_data
-                break
-        
-        if not active_camera and cameras:
-            active_camera = list(cameras.values())[0]
-        
-        if not active_camera:
-            # Configuración por defecto LIMPIA
-            return {
-                "rtsp_url": "",
-                "fase": "fase1", 
-                "direccion": "norte",
-                "controladora_id": "CTRL_001",
-                "controladora_ip": "192.168.1.200",
-                "camera_name": "",
-                "camera_model": "",
-                "camera_location": "",
-                "camera_serial": "",
-                "camera_ip": "",
-                "username": "admin",
-                "password": "",
-                "port": "554",
-                "stream_path": "/stream1",
-                "resolution": "1920x1080",
-                "frame_rate": "30",
-                "bitrate": "4000", 
-                "encoding": "H264",
-                "stream_quality": "high",
-                "night_vision": False,
-                "motion_detection": False,
-                "recording_enabled": False,
-                "audio_enabled": False,
-                "detection_zones": True,
-                "speed_calculation": True,
-                "vehicle_counting": True,
-                "license_plate_recognition": False,
-                "enabled": False
-            }
-        
-        # LIMPIAR Y NORMALIZAR configuración existente
-        clean_config = {
-            # Básicos requeridos
-            "rtsp_url": active_camera.get("rtsp_url", ""),
-            "fase": active_camera.get("fase", "fase1"),
-            "direccion": active_camera.get("direccion", "norte"),
-            "controladora_id": active_camera.get("controladora_id", "CTRL_001"),
-            "controladora_ip": active_camera.get("controladora_ip", "192.168.1.200"),
-            
-            # Identificación de cámara
-            "camera_name": active_camera.get("camera_name", ""),
-            "camera_model": active_camera.get("camera_model", ""),
-            "camera_location": active_camera.get("camera_location", ""),
-            "camera_serial": active_camera.get("camera_serial", ""),
-            
-            # Configuración de red
-            "camera_ip": active_camera.get("camera_ip", ""),
-            "username": active_camera.get("username", "admin"),
-            "password": active_camera.get("password", ""),
-            "port": active_camera.get("port", "554"),
-            "stream_path": active_camera.get("stream_path", "/stream1"),
-            
-            # Configuración de video
-            "resolution": active_camera.get("resolution", "1920x1080"),
-            "frame_rate": active_camera.get("frame_rate", "30"),
-            "bitrate": active_camera.get("bitrate", "4000"),
-            "encoding": active_camera.get("encoding", "H264"),
-            "stream_quality": active_camera.get("stream_quality", "high"),
-            
-            # Configuraciones avanzadas
-            "night_vision": active_camera.get("night_vision", False),
-            "motion_detection": active_camera.get("motion_detection", False),
-            "recording_enabled": active_camera.get("recording_enabled", False),
-            "audio_enabled": active_camera.get("audio_enabled", False),
-            
-            # Configuración de análisis
-            "detection_zones": active_camera.get("detection_zones", True),
-            "speed_calculation": active_camera.get("speed_calculation", True),
-            "vehicle_counting": active_camera.get("vehicle_counting", True),
-            "license_plate_recognition": active_camera.get("license_plate_recognition", False),
-            
-            # Estado
-            "enabled": active_camera.get("enabled", False)
-        }
-        
-        return clean_config
-        
-    except Exception as e:
-        logger.error(f"Error obteniendo configuración de cámara: {e}")
-        # Retornar configuración por defecto en caso de error
-        return {
-            "rtsp_url": "",
-            "fase": "fase1",
-            "direccion": "norte", 
-            "controladora_id": "CTRL_001",
-            "controladora_ip": "192.168.1.200",
-            "enabled": False,
-            "error": str(e)
-        }
-
+async def get_camera_config_api():
+    """Obtener configuración de cámara"""
+    config = load_camera_config()
+    logger.info(f"📤 Enviando configuración: RTSP={bool(config.get('rtsp_url'))}")
+    return config
 
 @app.post("/api/camera/config")
-async def update_camera_config(config: CameraConfig):
-    """Actualizar configuración de cámara - LIMPIEZA COMPLETA"""
+async def update_camera_config_api(config: CameraConfig):
+    """Actualizar configuración de cámara - SIMPLIFICADO"""
     try:
-        os.makedirs("/app/config", exist_ok=True)
+        logger.info(f"📥 Recibiendo configuración: RTSP={bool(config.rtsp_url)}")
         
-        # LIMPIAR configuración existente completamente
-        cameras = {
-            "camera_1": {
-                "id": "camera_1",
-                "name": "Cámara Principal",
-                # ESTRUCTURA LIMPIA - Sin anidamiento confuso
-                **config.dict(),
-                "enabled": True,
-                "last_updated": datetime.now().isoformat()
-            }
-        }
+        # Convertir a dict y guardar
+        config_dict = config.dict()
         
-        # GUARDAR configuración limpia
-        with open("/app/config/cameras.json", "w") as f:
-            json.dump(cameras, f, indent=2)
+        if not save_camera_config(config_dict):
+            raise HTTPException(status_code=500, detail="Error guardando configuración")
         
-        logger.info(f"✅ Configuración LIMPIA guardada - RTSP: {config.rtsp_url}")
-        
-        # REINICIAR video processor con configuración limpia
-        global video_processor
-        
-        # Parar procesador actual
-        if video_processor and hasattr(video_processor, 'is_running') and video_processor.is_running:
-            logger.info("🔄 Parando procesador de video...")
-            video_processor.stop_processing()
-            await asyncio.sleep(2)
-        
-        # Reinicializar SOLO si hay URL RTSP válida
-        if config.rtsp_url and config.rtsp_url.strip() and MODULES_AVAILABLE:
-            try:
-                logger.info("🚀 Inicializando procesador con configuración LIMPIA...")
-                
-                from app.core.video_processor import VideoProcessor
-                
-                # Usar configuración LIMPIA directamente
-                clean_camera_config = config.dict()
-                system_config = load_system_config()
-                
-                video_processor = VideoProcessor(
-                    camera_config=clean_camera_config,
-                    system_config=system_config,
-                    db_manager=db_manager,
-                    callback_func=controller_callback
-                )
-                
-                await video_processor.initialize()
-                video_processor.start_processing()
-                
-                logger.info("✅ Procesador iniciado con configuración LIMPIA")
-                
-                # Verificar después de 3 segundos
-                await asyncio.sleep(3)
-                is_running = video_processor.is_running if video_processor else False
-                current_fps = video_processor.current_fps if video_processor else 0
-                
-                logger.info(f"📊 Estado: Running={is_running}, FPS={current_fps}")
-                
-            except Exception as e:
-                logger.error(f"❌ Error inicializando video processor: {e}")
-                video_processor = None
-        
-        elif not config.rtsp_url or not config.rtsp_url.strip():
-            logger.info("ℹ️ No hay URL RTSP válida - video processor en espera")
-            video_processor = None
+        # Reiniciar video processor
+        processor_started = await restart_video_processor()
         
         return {
-            "message": "Configuración actualizada con estructura LIMPIA", 
-            "config": config.dict(),
-            "video_processor_active": video_processor.is_running if video_processor else False,
-            "rtsp_url_configured": bool(config.rtsp_url and config.rtsp_url.strip()),
-            "structure": "clean"  # Indicador de estructura limpia
+            "message": "Configuración guardada exitosamente",
+            "config_saved": True,
+            "video_processor_started": processor_started,
+            "rtsp_configured": bool(config.rtsp_url)
         }
         
     except Exception as e:
-        logger.error(f"❌ Error crítico actualizando configuración: {e}")
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+        logger.error(f"❌ Error actualizando configuración: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/camera/config/reset")
-async def reset_camera_config():
-    """Resetear configuración de cámara completamente"""
+async def reset_camera_config_api():
+    """Resetear configuración de cámara"""
     try:
         global video_processor
         
         # Parar video processor
         if video_processor:
-            video_processor.stop_processing()
+            if hasattr(video_processor, 'stop_processing'):
+                video_processor.stop_processing()
             await asyncio.sleep(2)
             video_processor = None
         
-        # LIMPIAR archivo completamente
-        clean_config = {
-            "camera_1": {
-                "id": "camera_1", 
-                "name": "Cámara Principal",
-                "rtsp_url": "",
-                "fase": "fase1",
-                "direccion": "norte",
-                "controladora_id": "CTRL_001",
-                "controladora_ip": "192.168.1.200",
-                "camera_name": "",
-                "camera_model": "",
-                "camera_location": "",
-                "camera_serial": "",
-                "camera_ip": "",
-                "username": "admin",
-                "password": "",
-                "port": "554",
-                "stream_path": "/stream1",
-                "resolution": "1920x1080",
-                "frame_rate": "30",
-                "bitrate": "4000",
-                "encoding": "H264",
-                "stream_quality": "high",
-                "night_vision": False,
-                "motion_detection": False,
-                "recording_enabled": False,
-                "audio_enabled": False,
-                "detection_zones": True,
-                "speed_calculation": True,
-                "vehicle_counting": True,
-                "license_plate_recognition": False,
-                "enabled": False,
-                "reset_at": datetime.now().isoformat()
-            }
+        # Crear configuración limpia
+        default_config = {
+            "rtsp_url": "",
+            "fase": "fase1",
+            "direccion": "norte",
+            "controladora_id": "CTRL_001",
+            "controladora_ip": "192.168.1.200",
+            "camera_name": "",
+            "camera_location": "",
+            "camera_ip": "",
+            "username": "admin",
+            "password": "",
+            "port": "554",
+            "resolution": "1920x1080",
+            "frame_rate": "30",
+            "enabled": False,
+            "reset_at": datetime.now().isoformat()
         }
         
-        with open("/app/config/cameras.json", "w") as f:
-            json.dump(clean_config, f, indent=2)
+        if not save_camera_config(default_config):
+            raise HTTPException(status_code=500, detail="Error guardando configuración")
         
-        logger.info("🧹 Configuración de cámara reseteada completamente")
+        logger.info("🧹 Configuración reseteada completamente")
         
         return {
             "message": "Configuración reseteada exitosamente",
-            "status": "clean",
-            "config": clean_config["camera_1"]
+            "config": default_config
         }
         
     except Exception as e:
-        logger.error(f"Error reseteando configuración: {e}")
+        logger.error(f"❌ Error reseteando configuración: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/camera/restart")
-async def restart_camera_processing():
-    """Reiniciar procesamiento de cámara manualmente"""
-    global video_processor
+# ESTADO DE CÁMARA
+@app.get("/api/camera/status")
+async def get_camera_status_api():
+    """Obtener estado de cámara"""
+    config = load_camera_config()
+    video_status = get_video_processor_status()
     
+    return {
+        "connected": video_status["running"],
+        "fps": video_status["fps"],
+        "rtsp_url": config.get("rtsp_url", ""),
+        "fase": config.get("fase", "fase1"),
+        "direccion": config.get("direccion", "norte"),
+        "enabled": config.get("enabled", False),
+        "error": video_status.get("error"),
+        "last_check": datetime.now().isoformat()
+    }
+
+# REINICIAR CÁMARA
+@app.post("/api/camera/restart")
+async def restart_camera_api():
+    """Reiniciar procesamiento de cámara"""
     try:
-        camera_config = load_camera_config()
+        config = load_camera_config()
         
-        if not camera_config.get("rtsp_url"):
+        if not config.get("rtsp_url"):
             raise HTTPException(status_code=400, detail="No hay URL RTSP configurada")
         
-        # Parar procesador actual
-        if video_processor:
-            video_processor.stop_processing()
-            await asyncio.sleep(2)
+        success = await restart_video_processor()
+        video_status = get_video_processor_status()
         
-        # Reinicializar
-        if MODULES_AVAILABLE:
-            from app.core.video_processor import VideoProcessor
-            
-            video_processor = VideoProcessor(
-                camera_config=camera_config,
-                system_config=load_system_config(),
-                db_manager=db_manager,
-                callback_func=controller_callback
-            )
-            
-            await video_processor.initialize()
-            video_processor.start_processing()
-            
-            # Verificar
-            await asyncio.sleep(3)
-            if video_processor.is_running:
-                return {
-                    "message": "Cámara reiniciada exitosamente",
-                    "status": "running",
-                    "fps": video_processor.current_fps
-                }
-            else:
-                return {
-                    "message": "Cámara reiniciada pero no está activa",
-                    "status": "inactive",
-                    "fps": 0
-                }
+        if success and video_status["running"]:
+            return {
+                "message": "Cámara reiniciada exitosamente",
+                "status": "running",
+                "fps": video_status["fps"]
+            }
         else:
-            raise HTTPException(status_code=500, detail="Módulos de video no disponibles")
+            return {
+                "message": "Cámara reiniciada pero no está procesando",
+                "status": "inactive",
+                "fps": 0,
+                "error": video_status.get("error")
+            }
             
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error reiniciando cámara: {e}")
+        logger.error(f"❌ Error reiniciando cámara: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# TEST DE CONEXIÓN
+@app.post("/api/camera/test")
+async def test_camera_stream_api(request: Request):
+    """Probar conexión RTSP - CORREGIDO"""
+    try:
+        data = await request.json()
+        rtsp_url = data.get("rtsp_url", "")
+        
+        if not rtsp_url:
+            raise HTTPException(status_code=400, detail="URL RTSP requerida")
+        
+        logger.info(f"🧪 Probando conexión RTSP: {rtsp_url}")
+        
+        # Test básico con OpenCV - SIN CAP_PROP_TIMEOUT
+        cap = cv2.VideoCapture(rtsp_url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        if not cap.isOpened():
+            cap.release()
+            return {
+                "success": False,
+                "message": "No se pudo conectar al stream RTSP. Verifique URL, credenciales y conectividad."
+            }
+        
+        # Intentar leer algunos frames con timeout manual
+        frames_read = 0
+        max_attempts = 10
+        
+        for i in range(max_attempts):
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                frames_read += 1
+                if frames_read >= 3:  # Si leemos 3 frames exitosos, es suficiente
+                    break
+            else:
+                # Esperar un poco entre intentos
+                import time
+                time.sleep(0.1)
+        
+        cap.release()
+        
+        if frames_read >= 3:
+            return {
+                "success": True,
+                "message": f"Conexión exitosa. Se leyeron {frames_read} frames.",
+                "frames_tested": frames_read
+            }
+        elif frames_read > 0:
+            return {
+                "success": True,
+                "message": f"Conexión inestable pero funcional. Se leyeron {frames_read} frames de {max_attempts} intentos.",
+                "frames_tested": frames_read
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"No se pudieron leer frames del stream. Verifique la URL RTSP y la configuración de la cámara."
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ Error en test de conexión: {e}")
+        return {
+            "success": False,
+            "message": f"Error en prueba de conexión: {str(e)}"
+        }
 
+# STREAM DE VIDEO - CORREGIDO
 @app.get("/api/camera/stream")
-async def get_camera_stream():
-    """Stream de video HTTP optimizado para navegadores web"""
+async def get_camera_stream_api():
+    """Stream de video HTTP"""
     def generate_frames():
+        frame_count = 0
+        last_frame_time = time.time()
+        
         while True:
             try:
-                if video_processor and video_processor.is_running:
-                    # Obtener frame procesado con análisis
+                current_time = time.time()
+                
+                # Control de FPS para web (15 FPS máximo)
+                if current_time - last_frame_time < 1/15:
+                    time.sleep(0.01)
+                    continue
+                
+                if video_processor and hasattr(video_processor, 'get_latest_frame'):
                     frame = video_processor.get_latest_frame()
                     if frame is not None:
-                        # Redimensionar para web (opcional)
+                        # Redimensionar para web
                         height, width = frame.shape[:2]
                         if width > 1280:
                             scale = 1280 / width
@@ -816,30 +677,23 @@ async def get_camera_stream():
                             new_height = int(height * scale)
                             frame = cv2.resize(frame, (new_width, new_height))
                         
-                        # Comprimir para web
-                        encode_params = [
-                            cv2.IMWRITE_JPEG_QUALITY, 85,  # Calidad 85%
-                            cv2.IMWRITE_JPEG_OPTIMIZE, 1   # Optimizar
-                        ]
-                        
-                        ret, buffer = cv2.imencode('.jpg', frame, encode_params)
+                        # Comprimir
+                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                         if ret:
+                            frame_count += 1
+                            last_frame_time = current_time
                             yield (b'--frame\r\n'
                                    b'Content-Type: image/jpeg\r\n'
                                    b'Content-Length: ' + str(len(buffer)).encode() + b'\r\n\r\n' + 
                                    buffer.tobytes() + b'\r\n')
-                    else:
-                        # Frame placeholder si no hay video
-                        yield _generate_placeholder_frame()
-                else:
-                    # Placeholder cuando no hay cámara configurada
-                    yield _generate_placeholder_frame()
+                            continue
                 
-                # Control de FPS para web (15 FPS es suficiente)
-                time.sleep(1/15)
+                # Frame placeholder si no hay video
+                yield _generate_placeholder_frame()
+                last_frame_time = current_time
                 
             except Exception as e:
-                logger.error(f"Error en streaming: {e}")
+                logger.error(f"❌ Error en streaming: {e}")
                 yield _generate_error_frame()
                 time.sleep(1)
     
@@ -855,20 +709,22 @@ async def get_camera_stream():
     )
 
 def _generate_placeholder_frame():
-    """Generar frame placeholder"""
+    """Frame placeholder"""
     placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
     
     # Fondo degradado
     for i in range(480):
-        placeholder[i, :] = [20 + (i//10), 25 + (i//10), 35 + (i//10)]
+        placeholder[i, :] = [20 + (i//15), 25 + (i//15), 35 + (i//15)]
     
-    # Texto informativo
+    # Texto
     cv2.putText(placeholder, "SISTEMA DE DETECCION VEHICULAR", (80, 200), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     cv2.putText(placeholder, "Radxa Rock 5T", (230, 240), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 150, 255), 2)
     cv2.putText(placeholder, "Configure la camara para comenzar", (130, 280), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    cv2.putText(placeholder, f"FPS: 0 | Estado: Esperando configuracion", (160, 320),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
     
     ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 80])
     if ret:
@@ -879,13 +735,15 @@ def _generate_placeholder_frame():
     return b''
 
 def _generate_error_frame():
-    """Generar frame de error"""
+    """Frame de error"""
     error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    error_frame[:] = [40, 20, 20]  # Fondo rojizo
+    error_frame[:] = [40, 20, 20]
     
     cv2.putText(error_frame, "ERROR DE CONEXION", (180, 220), 
                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     cv2.putText(error_frame, "Verificar configuracion RTSP", (150, 260), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    cv2.putText(error_frame, "URL, credenciales y conectividad", (140, 300),
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
     
     ret, buffer = cv2.imencode('.jpg', error_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -896,225 +754,163 @@ def _generate_error_frame():
                 buffer.tobytes() + b'\r\n')
     return b''
 
-# AGREGAR TAMBIÉN ESTE ENDPOINT PARA PREVIEW
-@app.get("/api/camera/preview")
-async def get_camera_preview():
-    """Stream de preview sin análisis (más rápido)"""
-    def generate_preview():
-        while True:
-            try:
-                if video_processor and video_processor.is_running:
-                    # Obtener frame original sin overlay
-                    frame = video_processor.get_raw_frame()  # Necesitarás agregar este método
-                    if frame is not None:
-                        # Redimensionar más pequeño para preview
-                        frame = cv2.resize(frame, (320, 240))
-                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                        if ret:
-                            yield (b'--frame\r\n'
-                                   b'Content-Type: image/jpeg\r\n\r\n' + 
-                                   buffer.tobytes() + b'\r\n')
-                
-                time.sleep(1/10)  # 10 FPS para preview
-            except:
-                time.sleep(1)
-    
-    return StreamingResponse(
-        generate_preview(),
-        media_type="multipart/x-mixed-replace; boundary=frame"
-    )
-     
-# Configuración del sistema
-@app.get("/api/config/system")
-async def get_system_config():
-    """Obtener configuración del sistema"""
-    return load_system_config()
+# ============================================================================
+# CONFIGURACIÓN DEL SISTEMA
+# ============================================================================
+def get_system_config_file_path():
+    return "/app/config/system_config.json"
 
-@app.post("/api/config/system")
-async def update_system_config(config: SystemConfig):
+def load_system_config() -> Dict:
+    """Cargar configuración del sistema"""
+    config_file = get_system_config_file_path()
+    try:
+        if os.path.exists(config_file):
+            with open(config_file, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error cargando config sistema: {e}")
+    
+    # Configuración por defecto
+    return {
+        "confidence_threshold": 0.5,
+        "night_vision_enhancement": True,
+        "show_overlay": True,
+        "data_retention_days": 30,
+        "target_fps": 30,
+        "log_level": "INFO"
+    }
+
+def save_system_config(config: Dict) -> bool:
+    """Guardar configuración del sistema"""
+    config_file = get_system_config_file_path()
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        with open(config_file, "w") as f:
+            json.dump(config, f, indent=2)
+        logger.info(f"✅ Config sistema guardada: {config_file}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error guardando config sistema: {e}")
+        return False
+
+@app.get("/api/config/system")
+async def get_system_config_api():
+    """Obtener configuración del sistema"""
+    config = load_system_config()
+    return config
+
+@app.post("/api/config/system") 
+async def update_system_config_api(request: Request):
     """Actualizar configuración del sistema"""
     try:
-        os.makedirs("/app/config", exist_ok=True)
+        data = await request.json()
         
-        try:
-            with open("/app/config/system.json", "r") as f:
-                system_config = json.load(f)
-        except:
-            system_config = {}
+        current_config = load_system_config()
+        current_config.update(data)
         
-        system_config.update(config.dict())
-        
-        with open("/app/config/system.json", "w") as f:
-            json.dump(system_config, f, indent=2)
-        
-        return {"message": "Configuración del sistema actualizada"}
-        
+        if save_system_config(current_config):
+            return {"message": "Configuración del sistema actualizada"}
+        else:
+            raise HTTPException(status_code=500, detail="Error guardando configuración")
+            
     except Exception as e:
-        logger.error(f"Error actualizando configuración: {e}")
+        logger.error(f"❌ Error actualizando config sistema: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+def get_analysis_file_path():
+    return "/app/config/analysis.json"
 
-# Análisis - Líneas
-@app.get("/api/analysis/lines")
-async def get_lines():
-    """Obtener todas las líneas de análisis configuradas"""
+def load_analysis_config():
+    """Cargar configuración de análisis"""
+    analysis_file = get_analysis_file_path()
+    try:
+        if os.path.exists(analysis_file):
+            with open(analysis_file, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error cargando análisis: {e}")
+    
+    return {"lines": {}, "zones": {}}
+
+def save_analysis_config(analysis_config):
+    """Guardar configuración de análisis"""
+    analysis_file = get_analysis_file_path()
     try:
         os.makedirs("/app/config", exist_ok=True)
-        
-        try:
-            with open("/app/config/analysis.json", "r") as f:
-                analysis = json.load(f)
-        except:
-            analysis = {"lines": {}, "zones": {}}
-            with open("/app/config/analysis.json", "w") as f:
-                json.dump(analysis, f, indent=2)
-        
-        return {"lines": analysis.get("lines", {})}
-        
+        with open(analysis_file, "w") as f:
+            json.dump(analysis_config, f, indent=2)
+        return True
     except Exception as e:
-        logger.error(f"Error obteniendo líneas: {e}")
-        return {"lines": {}}
+        logger.error(f"Error guardando análisis: {e}")
+        return False
+
+@app.get("/api/analysis/lines")
+async def get_lines_api():
+    analysis = load_analysis_config()
+    return {"lines": analysis.get("lines", {})}
 
 @app.post("/api/analysis/lines")
-async def add_line(line: LineConfig):
-    """Agregar línea de análisis"""
+async def add_line_api(line: LineConfig):
     try:
-        os.makedirs("/app/config", exist_ok=True)
-        
-        try:
-            with open("/app/config/analysis.json", "r") as f:
-                analysis = json.load(f)
-        except:
-            analysis = {"lines": {}, "zones": {}}
-        
+        analysis = load_analysis_config()
         analysis["lines"][line.id] = line.dict()
         
-        with open("/app/config/analysis.json", "w") as f:
-            json.dump(analysis, f, indent=2)
-        
-        if video_processor and video_processor.analyzer and MODULES_AVAILABLE:
-            from app.core.analyzer import Line, LineType
-            new_line = Line(
-                id=line.id,
-                name=line.name,
-                points=[(p[0], p[1]) for p in line.points],
-                lane=line.lane,
-                line_type=LineType.COUNTING if line.line_type == "counting" else LineType.SPEED,
-                distance_to_next=line.distance_to_next
-            )
-            video_processor.analyzer.add_line(new_line)
-        
-        return {"message": "Línea agregada exitosamente"}
-        
+        if save_analysis_config(analysis):
+            return {"message": "Línea agregada exitosamente"}
+        else:
+            raise HTTPException(status_code=500, detail="Error guardando línea")
     except Exception as e:
         logger.error(f"Error agregando línea: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/analysis/lines/{line_id}")
-async def delete_line(line_id: str):
-    """Eliminar línea de análisis"""
+async def delete_line_api(line_id: str):
     try:
-        os.makedirs("/app/config", exist_ok=True)
-        
-        try:
-            with open("/app/config/analysis.json", "r") as f:
-                analysis = json.load(f)
-        except:
-            analysis = {"lines": {}, "zones": {}}
-        
+        analysis = load_analysis_config()
         if line_id in analysis.get("lines", {}):
             del analysis["lines"][line_id]
-            
-            with open("/app/config/analysis.json", "w") as f:
-                json.dump(analysis, f, indent=2)
-            
-            logger.info(f"Línea eliminada: {line_id}")
-            return {"message": "Línea eliminada exitosamente"}
+            if save_analysis_config(analysis):
+                return {"message": "Línea eliminada exitosamente"}
+            else:
+                raise HTTPException(status_code=500, detail="Error guardando cambios")
         else:
             raise HTTPException(status_code=404, detail="Línea no encontrada")
-            
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error eliminando línea: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Análisis - Zonas
 @app.get("/api/analysis/zones")
-async def get_zones():
-    """Obtener todas las zonas de análisis configuradas"""
-    try:
-        os.makedirs("/app/config", exist_ok=True)
-        
-        try:
-            with open("/app/config/analysis.json", "r") as f:
-                analysis = json.load(f)
-        except:
-            analysis = {"lines": {}, "zones": {}}
-            with open("/app/config/analysis.json", "w") as f:
-                json.dump(analysis, f, indent=2)
-        
-        return {"zones": analysis.get("zones", {})}
-        
-    except Exception as e:
-        logger.error(f"Error obteniendo zonas: {e}")
-        return {"zones": {}}
+async def get_zones_api():
+    analysis = load_analysis_config()
+    return {"zones": analysis.get("zones", {})}
 
 @app.post("/api/analysis/zones")
-async def add_zone(zone: ZoneConfig):
-    """Agregar zona de análisis"""
+async def add_zone_api(zone: ZoneConfig):
     try:
-        os.makedirs("/app/config", exist_ok=True)
-        
-        try:
-            with open("/app/config/analysis.json", "r") as f:
-                analysis = json.load(f)
-        except:
-            analysis = {"lines": {}, "zones": {}}
-        
+        analysis = load_analysis_config()
         analysis["zones"][zone.id] = zone.dict()
         
-        with open("/app/config/analysis.json", "w") as f:
-            json.dump(analysis, f, indent=2)
-        
-        if video_processor and video_processor.analyzer and MODULES_AVAILABLE:
-            from app.core.analyzer import Zone
-            new_zone = Zone(
-                id=zone.id,
-                name=zone.name,
-                points=[(p[0], p[1]) for p in zone.points],
-                zone_type=zone.zone_type
-            )
-            video_processor.analyzer.add_zone(new_zone)
-        
-        return {"message": "Zona agregada exitosamente"}
-        
+        if save_analysis_config(analysis):
+            return {"message": "Zona agregada exitosamente"}
+        else:
+            raise HTTPException(status_code=500, detail="Error guardando zona")
     except Exception as e:
         logger.error(f"Error agregando zona: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/analysis/zones/{zone_id}")
-async def delete_zone(zone_id: str):
-    """Eliminar zona de análisis"""
+async def delete_zone_api(zone_id: str):
     try:
-        os.makedirs("/app/config", exist_ok=True)
-        
-        try:
-            with open("/app/config/analysis.json", "r") as f:
-                analysis = json.load(f)
-        except:
-            analysis = {"lines": {}, "zones": {}}
-        
+        analysis = load_analysis_config()
         if zone_id in analysis.get("zones", {}):
             del analysis["zones"][zone_id]
-            
-            with open("/app/config/analysis.json", "w") as f:
-                json.dump(analysis, f, indent=2)
-            
-            logger.info(f"Zona eliminada: {zone_id}")
-            return {"message": "Zona eliminada exitosamente"}
+            if save_analysis_config(analysis):
+                return {"message": "Zona eliminada exitosamente"}
+            else:
+                raise HTTPException(status_code=500, detail="Error guardando cambios")
         else:
             raise HTTPException(status_code=404, detail="Zona no encontrada")
-            
     except HTTPException:
         raise
     except Exception as e:
@@ -1122,25 +918,22 @@ async def delete_zone(zone_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/analysis/clear")
-async def clear_analysis():
-    """Limpiar todas las líneas y zonas"""
+async def clear_analysis_api():
     try:
-        os.makedirs("/app/config", exist_ok=True)
-        
         analysis = {"lines": {}, "zones": {}}
-        with open("/app/config/analysis.json", "w") as f:
-            json.dump(analysis, f, indent=2)
-        
-        logger.info("Configuración de análisis limpiada")
-        return {"message": "Todas las líneas y zonas eliminadas"}
-        
+        if save_analysis_config(analysis):
+            return {"message": "Configuración de análisis limpiada"}
+        else:
+            raise HTTPException(status_code=500, detail="Error limpiando análisis")
     except Exception as e:
         logger.error(f"Error limpiando análisis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Exportar datos
+# ============================================================================
+# EXPORTAR DATOS (SIMPLIFICADO)
+# ============================================================================
 @app.get("/api/data/export")
-async def export_data(date: str, type: str = "vehicle", fase: str = None):
+async def export_data_api(date: str, type: str = "vehicle", fase: str = None):
     """Exportar datos por fecha"""
     if not db_manager:
         return {
@@ -1148,26 +941,16 @@ async def export_data(date: str, type: str = "vehicle", fase: str = None):
             "type": type,
             "fase": fase,
             "data": [],
-            "exported_at": datetime.now().isoformat(),
             "message": "Base de datos no disponible"
         }
     
     try:
-        export_date = datetime.strptime(date, "%Y_%m_%d")
-        
         if type == "vehicle":
             data = await db_manager.export_vehicle_crossings(date, fase)
         elif type == "red_light":
             data = await db_manager.export_red_light_counts(date, fase)
-        elif type == "all":
-            vehicle_data = await db_manager.export_vehicle_crossings(date, fase)
-            red_light_data = await db_manager.export_red_light_counts(date, fase)
-            data = {
-                "vehicle_crossings": vehicle_data,
-                "red_light_counts": red_light_data
-            }
         else:
-            raise HTTPException(status_code=400, detail="Tipo de exportación no válido")
+            data = []
         
         return {
             "date": date,
@@ -1176,104 +959,17 @@ async def export_data(date: str, type: str = "vehicle", fase: str = None):
             "data": data,
             "exported_at": datetime.now().isoformat()
         }
-    
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Formato de fecha inválido (YYYY_MM_DD)")
     except Exception as e:
         logger.error(f"Error exportando datos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Controladora
-@app.post("/api/rojo_status")
-async def update_traffic_light_status(request: Request):
-    """Recibir estado de semáforos de la controladora"""
-    try:
-        data = await request.json()
-        fases = data.get("fases", {})
-        
-        if controller_service:
-            controller_service.update_traffic_light_status(fases)
-        
-        logger.info(f"Estado de semáforos actualizado: {fases}")
-        return {"status": "updated", "fases": fases}
-        
-    except Exception as e:
-        logger.error(f"Error actualizando estado de semáforos: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/rojo_status")
-async def get_traffic_light_status():
-    """Obtener estado actual de semáforos"""
-    if controller_service:
-        return {"fases": controller_service.current_status}
-    return {"fases": {"fase1": False, "fase2": False, "fase3": False, "fase4": False}}
-
-@app.post("/api/analitico_camara")
-async def receive_analytic_confirmation(request: Request):
-    """Recibir confirmación de analítico de la controladora"""
-    try:
-        data = await request.json()
-        logger.info(f"Confirmación de analítico recibida: {data}")
-        return {"status": "received", "message": "Confirmación procesada"}
-        
-    except Exception as e:
-        logger.error(f"Error procesando confirmación: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 # ============================================================================
-# TAREAS EN BACKGROUND (MANTIENEN FUNCIONALIDAD COMPLETA)
+# FRONTEND
 # ============================================================================
-async def daily_cleanup_task():
-    """Tarea diaria de limpieza de base de datos"""
-    while True:
-        try:
-            now = datetime.now()
-            next_cleanup = now.replace(hour=2, minute=0, second=0, microsecond=0)
-            if next_cleanup <= now:
-                next_cleanup += timedelta(days=1)
-            
-            wait_seconds = (next_cleanup - now).total_seconds()
-            await asyncio.sleep(wait_seconds)
-            
-            logger.info("🧹 Ejecutando limpieza diaria...")
-            if db_manager:
-                await db_manager.cleanup_old_databases()
-                await db_manager.init_daily_database()
-            
-        except Exception as e:
-            logger.error(f"Error en tarea de limpieza: {e}")
-            await asyncio.sleep(3600)
-
-async def traffic_light_update_task():
-    """Tarea de actualización de estado de semáforo con controladora TICSA"""
-    while True:
-        try:
-            if controller_service:
-                status = await controller_service.get_traffic_light_status()
-                if status and video_processor:
-                    camera_config = load_camera_config()
-                    camera_phase = camera_config.get("fase", "fase1")
-                    is_red = status.get(camera_phase, False)
-                    video_processor.update_red_light_status(is_red)
-            
-            await asyncio.sleep(1)
-            
-        except Exception as e:
-            logger.error(f"Error actualizando estado de semáforo: {e}")
-            await asyncio.sleep(5)
-
-# ============================================================================
-# RUTAS DEL FRONTEND (MANTIENEN FUNCIONALIDAD COMPLETA)
-# ============================================================================
-# REEMPLAZA TODO desde línea 854 hasta el final con esto:
-
 FRONTEND_BUILD_PATH = "/app/frontend/build"
-HAS_FRONTEND = os.path.exists(FRONTEND_BUILD_PATH) and os.path.exists(f"{FRONTEND_BUILD_PATH}/index.html")
+HAS_FRONTEND = os.path.exists(FRONTEND_BUILD_PATH)
 
 if HAS_FRONTEND:
-    logger.info("✅ Frontend encontrado - configurando rutas")
-    
-    # Montar archivos estáticos
     app.mount("/static", StaticFiles(directory=f"{FRONTEND_BUILD_PATH}/static"), name="static")
     
     @app.get("/")
@@ -1282,39 +978,32 @@ if HAS_FRONTEND:
 
     @app.get("/{path:path}")
     async def catch_all(path: str):
-        # Skip API routes
-        if path.startswith(("api/", "docs", "redoc", "openapi.json")):
-            raise HTTPException(404, "Not found")
+        if path.startswith(("api/", "docs", "redoc")):
+            raise HTTPException(404)
         
         file_path = f"{FRONTEND_BUILD_PATH}/{path}"
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(f"{FRONTEND_BUILD_PATH}/index.html")
-
 else:
     @app.get("/")
     async def fallback_root():
-        """Fallback cuando no hay frontend"""
         return {
             "message": "Sistema de Detección Vehicular - Radxa Rock 5T",
             "status": "running",
             "version": "1.0.0",
             "api_docs": "/docs",
-            "endpoints": {
-                "health": "/api/camera_health",
-                "camera": "/api/camera/status"
-            }
+            "health": "/api/camera_health"
         }
 
 # ============================================================================
-# INICIO DEL SERVIDOR (CORREGIDO)
+# INICIO DEL SERVIDOR
 # ============================================================================
 if __name__ == "__main__":
     print("🚀 Vehicle Detection System Starting")
     print(f"🌐 Server: http://0.0.0.0:8000")
-    print(f"📚 Docs: http://0.0.0.0:8000/docs")
+    print(f"📚 API Docs: http://0.0.0.0:8000/docs")
     print(f"🎯 Frontend: {'Available' if HAS_FRONTEND else 'Not available'}")
-    print(f"⚡ RKNN: {'Enabled' if os.getenv('USE_RKNN', '0') == '1' else 'Disabled'}")
     
     uvicorn.run(
         "main:app",

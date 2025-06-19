@@ -45,21 +45,21 @@ class TrafficAnalyzer:
         self.analytic_sent_this_cycle = False
 
     def cleanup_old_vehicles(self, max_age_seconds: int = 100):
-    """Limpiar vehículos antiguos para evitar memory leak"""
-    current_time = time.time()
-    vehicles_to_remove = []
-    
-    for vehicle_id, crossings in self.vehicle_line_crossings.items():
-        if crossings:
-            last_crossing = max(crossings.values())
-            if current_time - last_crossing > max_age_seconds:
-                vehicles_to_remove.append(vehicle_id)
-    
-    for vehicle_id in vehicles_to_remove:
-        self.vehicle_line_crossings.pop(vehicle_id, None)
-        self.vehicle_lanes.pop(vehicle_id, None)
-        self.vehicle_speeds.pop(vehicle_id, None)
-        self.vehicle_last_line.pop(vehicle_id, None)
+        """Limpiar vehículos antiguos para evitar memory leak"""
+        current_time = time.time()
+        vehicles_to_remove = []
+        
+        for vehicle_id, crossings in self.vehicle_line_crossings.items():
+            if crossings:
+                last_crossing = max(crossings.values())
+                if current_time - last_crossing > max_age_seconds:
+                    vehicles_to_remove.append(vehicle_id)
+        
+        for vehicle_id in vehicles_to_remove:
+            self.vehicle_line_crossings.pop(vehicle_id, None)
+            self.vehicle_lanes.pop(vehicle_id, None)
+            self.vehicle_speeds.pop(vehicle_id, None)
+            self.vehicle_last_line.pop(vehicle_id, None)
 
     def add_line(self, line: Line):
         """Agregar línea de conteo o velocidad"""
