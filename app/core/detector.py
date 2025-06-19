@@ -1,9 +1,9 @@
-# Actualizar app/core/detector.py
-
 import os
 import subprocess
 from pathlib import Path
 from loguru import logger
+import cv2
+import numpy as np
 
 try:
     from ultralytics import YOLO
@@ -27,6 +27,7 @@ class VehicleDetector:
         self.model = None
         self.use_rknn = False
         self.model_type = "none"
+        self.input_size = (640, 640)
         
         # Asegurar directorio de modelos
         os.makedirs("/app/models", exist_ok=True)
@@ -35,26 +36,20 @@ class VehicleDetector:
         self._initialize_model(model_path)
     
     def _initialize_model(self, model_path: str = None):
-        """Inicializar modelo con prioridad: RKNN > ONNX > PyTorch"""
+        """Inicializar modelo con prioridad: YOLO11n RKNN > ONNX > PyTorch"""
         
-        # 1. Intentar usar YOLO11n con RKNN (método moderno)
+        # 1. Intentar YOLO11n con RKNN (método moderno Ultralytics 8.3+)
         if ULTRALYTICS_AVAILABLE and self._check_rknn_support():
-            if self._init_yolo11n_rknn():
+            if self._init_yolo11n_rknn_native(model_path):
                 return
         
-        # 2. Fallback a ONNX si está disponible
-        onnx_path = "/app/models/yolo11n.onnx"
-        if os.path.exists(onnx_path) and ULTRALYTICS_AVAILABLE:
-            if self._init_yolo11n_onnx(onnx_path):
-                return
-        
-        # 3. Fallback a PyTorch
+        # 2. Fallback a PyTorch/ONNX
         if ULTRALYTICS_AVAILABLE:
             if self._init_yolo11n_pytorch():
                 return
         
-        # 4. Fallback final: OpenCV con modelo básico
-        logger.warning("⚠️ Todos los métodos fallaron, usando detección básica")
+        # 3. Fallback final: detección básica
+        logger.warning("⚠️ Todos los métodos avanzados fallaron, usando detección básica")
         self.model_type = "basic"
     
     def _check_rknn_support(self) -> bool:
@@ -63,74 +58,92 @@ class VehicleDetector:
             return False
         
         try:
-            # Test básico de RKNN
+            # Test básico de RKNN runtime
             test_rknn = RKNNLite()
-            # No cargar modelo, solo verificar que la librería funciona
             logger.info("✅ RKNN runtime disponible")
             return True
         except Exception as e:
             logger.error(f"❌ Error verificando RKNN: {e}")
             return False
     
-    def _init_yolo11n_rknn(self) -> bool:
-        """Inicializar YOLO11n con RKNN usando Ultralytics nativo"""
+    def _init_yolo11n_rknn_native(self, model_path: str = None) -> bool:
+        """Inicializar YOLO11n con RKNN usando Ultralytics nativo (método recomendado)"""
         try:
             logger.info("🚀 Inicializando YOLO11n con soporte RKNN nativo...")
             
-            # Verificar si ya existe modelo RKNN
-            rknn_model_dir = "/app/models/yolo11n-rk3588.rknn"
+            # Buscar modelo RKNN disponible
+            possible_paths = [
+                model_path,
+                "/app/models/yolo11n-rk3588.rknn",
+                "/app/models/yolo11n_rknn_model",
+                "/models/yolo11n-rk3588.rknn",  # Ruta mencionada por el usuario
+                "/models/yolo11n_rknn_model"
+            ]
             
-            if not os.path.exists(rknn_model_dir):
-                logger.info("📥 Descargando y convirtiendo YOLO11n a RKNN...")
-                
-                # Crear modelo y exportar a RKNN
-                model = YOLO("yolo11n.pt")  # Descarga automáticamente
-                
-                # Exportar a RKNN para RK3588
-                export_path = model.export(
-                    format="rknn", 
-                    name="rk3588",
-                    imgsz=640,
-                    half=False,
-                    int8=True  # Cuantización INT8 para mejor rendimiento
-                )
-                
-                # Mover a ubicación estándar
-                if os.path.exists("yolo11n_rknn_model"):
-                    import shutil
-                    shutil.move("yolo11n_rknn_model", rknn_model_dir)
-                
-                logger.info(f"✅ Modelo RKNN exportado: {rknn_model_dir}")
+            rknn_model_path = None
+            for path in possible_paths:
+                if path and (os.path.exists(path) or os.path.isdir(path)):
+                    rknn_model_path = path
+                    logger.info(f"📁 Modelo RKNN encontrado: {path}")
+                    break
             
-            # Cargar modelo RKNN
-            self.model = YOLO(rknn_model_dir)
-            self.use_rknn = True
-            self.model_type = "yolo11n_rknn"
+            # Si no existe, crear modelo RKNN
+            if not rknn_model_path:
+                logger.info("📥 Modelo RKNN no encontrado, creando desde PyTorch...")
+                
+                # Cargar modelo YOLO11n y exportar a RKNN
+                try:
+                    model = YOLO("yolo11n.pt")  # Descarga automáticamente si no existe
+                    
+                    # Exportar a RKNN para RK3588 (método actualizado)
+                    logger.info("🔄 Exportando YOLO11n a formato RKNN...")
+                    export_path = model.export(
+                        format="rknn", 
+                        name="rk3588",  # Plataforma específica
+                        task="detect",  # Evitar warning automático
+                        imgsz=640,
+                        half=False,
+                        int8=True  # Cuantización INT8 para mejor rendimiento
+                    )
+                    
+                    rknn_model_path = "/app/models/yolo11n_rknn_model"
+                    
+                    # Mover a ubicación estándar si es necesario
+                    if export_path != rknn_model_path and os.path.exists(export_path):
+                        import shutil
+                        if os.path.isdir(export_path):
+                            shutil.move(export_path, rknn_model_path)
+                        else:
+                            shutil.move(export_path, f"{rknn_model_path}.rknn")
+                    
+                    logger.info(f"✅ Modelo RKNN exportado: {rknn_model_path}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error exportando modelo RKNN: {e}")
+                    return False
             
-            logger.info("✅ YOLO11n + RKNN inicializado correctamente")
-            return True
+            # Cargar modelo RKNN con Ultralytics
+            try:
+                self.model = YOLO(rknn_model_path, task="detect")  # Especificar task explícitamente
+                self.use_rknn = True
+                self.model_type = "yolo11n_rknn_native"
+                
+                logger.info("✅ YOLO11n + RKNN inicializado correctamente")
+                return True
+                
+            except Exception as e:
+                logger.error(f"❌ Error cargando modelo RKNN: {e}")
+                return False
             
         except Exception as e:
-            logger.error(f"❌ Error inicializando YOLO11n + RKNN: {e}")
-            return False
-    
-    def _init_yolo11n_onnx(self, onnx_path: str) -> bool:
-        """Inicializar YOLO11n con ONNX"""
-        try:
-            logger.info("🔄 Inicializando YOLO11n con ONNX...")
-            self.model = YOLO(onnx_path)
-            self.model_type = "yolo11n_onnx"
-            logger.info("✅ YOLO11n ONNX inicializado")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Error con YOLO11n ONNX: {e}")
+            logger.error(f"❌ Error en inicialización RKNN nativa: {e}")
             return False
     
     def _init_yolo11n_pytorch(self) -> bool:
-        """Inicializar YOLO11n con PyTorch"""
+        """Inicializar YOLO11n con PyTorch (fallback)"""
         try:
             logger.info("🔄 Inicializando YOLO11n con PyTorch...")
-            self.model = YOLO("yolo11n.pt")  # Descarga automáticamente
+            self.model = YOLO("yolo11n.pt", task="detect")  # Especificar task
             self.model_type = "yolo11n_pytorch"
             logger.info("✅ YOLO11n PyTorch inicializado")
             return True
@@ -139,7 +152,7 @@ class VehicleDetector:
             return False
     
     def detect(self, frame):
-        """Detectar vehículos en frame"""
+        """Detectar vehículos en frame con YOLO11n moderno"""
         try:
             if self.model is None:
                 return []
@@ -147,21 +160,35 @@ class VehicleDetector:
             if self.model_type == "basic":
                 return self._basic_detection(frame)
             
-            # Usar YOLO11n (cualquier backend)
-            results = self.model(frame, conf=self.confidence_threshold, verbose=False)
+            # Usar YOLO11n moderno (RKNN o PyTorch)
+            # Parámetros optimizados según documentación Ultralytics
+            results = self.model(
+                frame, 
+                conf=self.confidence_threshold,
+                iou=0.7,  # NMS IoU threshold
+                verbose=False,  # Silenciar logs verbosos
+                device='cpu',  # Forzar CPU para RKNN
+                classes=[2, 3, 5, 7]  # Solo vehículos: car, motorcycle, bus, truck
+            )
             
             detections = []
             for result in results:
                 if result.boxes is not None:
                     for box in result.boxes:
-                        # Filtrar solo vehículos (clases COCO: 2=car, 3=motorcycle, 5=bus, 7=truck)
+                        # Extraer datos de detección
+                        xyxy = box.xyxy[0].cpu().numpy()
+                        confidence = float(box.conf[0])
                         class_id = int(box.cls[0])
-                        if class_id in [2, 3, 5, 7]:
-                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                            confidence = float(box.conf[0])
-                            
+                        
+                        # Convertir coordenadas
+                        x1, y1, x2, y2 = xyxy
+                        width = x2 - x1
+                        height = y2 - y1
+                        
+                        # Validar detección
+                        if confidence >= self.confidence_threshold and width > 10 and height > 10:
                             detections.append({
-                                'bbox': [int(x1), int(y1), int(x2-x1), int(y2-y1)],
+                                'bbox': [int(x1), int(y1), int(width), int(height)],
                                 'confidence': confidence,
                                 'class_id': class_id,
                                 'class_name': self._get_class_name(class_id)
@@ -174,13 +201,11 @@ class VehicleDetector:
             return []
     
     def _basic_detection(self, frame):
-        """Detección básica de fallback"""
-        # Implementación básica que siempre devuelve una lista vacía
-        # En producción, podrías usar OpenCV con un modelo básico
+        """Detección básica de fallback (placeholder)"""
         return []
     
     def _get_class_name(self, class_id: int) -> str:
-        """Obtener nombre de clase de vehículo"""
+        """Obtener nombre de clase de vehículo (COCO dataset)"""
         class_names = {
             2: 'car',
             3: 'motorcycle', 
@@ -189,6 +214,32 @@ class VehicleDetector:
         }
         return class_names.get(class_id, 'vehicle')
     
+    def enhance_night_vision(self, frame: np.ndarray) -> np.ndarray:
+        """Mejorar visión nocturna - Optimizado para Radxa Rock 5T"""
+        try:
+            # Convertir a LAB para mejor manipulación de luminancia
+            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            
+            # Aplicar CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            l = clahe.apply(l)
+            
+            # Recombinar canales
+            enhanced = cv2.merge([l, a, b])
+            enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+            
+            # Ajuste adicional de gamma para condiciones nocturnas
+            gamma = 1.2
+            enhanced = np.power(enhanced / 255.0, gamma)
+            enhanced = (enhanced * 255).astype(np.uint8)
+            
+            return enhanced
+            
+        except Exception as e:
+            logger.error(f"Error en mejora nocturna: {e}")
+            return frame
+    
     def get_model_info(self) -> dict:
         """Obtener información del modelo actual"""
         return {
@@ -196,5 +247,47 @@ class VehicleDetector:
             "use_rknn": self.use_rknn,
             "rknn_available": RKNN_AVAILABLE,
             "ultralytics_available": ULTRALYTICS_AVAILABLE,
-            "confidence_threshold": self.confidence_threshold
+            "confidence_threshold": self.confidence_threshold,
+            "input_size": self.input_size,
+            "vehicle_classes": ["car", "motorcycle", "bus", "truck"]
         }
+    
+    def benchmark_model(self, test_image_path: str = None) -> dict:
+        """Hacer benchmark del modelo (útil para optimización)"""
+        if not self.model:
+            return {"error": "Modelo no inicializado"}
+        
+        try:
+            import time
+            
+            # Crear imagen de prueba si no se proporciona
+            if test_image_path and os.path.exists(test_image_path):
+                test_frame = cv2.imread(test_image_path)
+            else:
+                test_frame = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
+            
+            # Warm-up
+            for _ in range(3):
+                self.detect(test_frame)
+            
+            # Benchmark
+            start_time = time.time()
+            num_runs = 10
+            
+            for _ in range(num_runs):
+                detections = self.detect(test_frame)
+            
+            end_time = time.time()
+            avg_time = (end_time - start_time) / num_runs
+            fps = 1.0 / avg_time if avg_time > 0 else 0
+            
+            return {
+                "model_type": self.model_type,
+                "avg_inference_time_ms": avg_time * 1000,
+                "fps": fps,
+                "num_detections": len(detections) if 'detections' in locals() else 0,
+                "rknn_enabled": self.use_rknn
+            }
+            
+        except Exception as e:
+            return {"error": str(e)}
