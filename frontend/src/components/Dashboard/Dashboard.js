@@ -229,11 +229,7 @@ const Dashboard = () => {
               <div className="flex justify-between">
                 <span>Hardware:</span>
                 <span>Radxa Rock 5T</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Modelo de IA:</span>
-                <span>YOLOv8n + RKNN</span>
-              </div>
+              </div>              
               <div className="flex justify-between">
                 <span>Tracker:</span>
                 <span>BYTETracker</span>

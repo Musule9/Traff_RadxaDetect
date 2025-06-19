@@ -232,10 +232,6 @@ const SystemConfig = () => {
               <p className="text-xs text-gray-400">NPU</p>
               <p className="font-medium text-white">RKNN Habilitado</p>
             </div>
-            <div className="bg-gray-700 p-3 rounded">
-              <p className="text-xs text-gray-400">Modelo</p>
-              <p className="font-medium text-white">YOLOv8n</p>
-            </div>
           </div>
         </div>
 

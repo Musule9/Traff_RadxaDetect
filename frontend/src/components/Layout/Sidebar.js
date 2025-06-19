@@ -111,10 +111,6 @@ const Sidebar = ({ collapsed, cameras, selectedCamera, onCameraSelect }) => {
               <span>NPU:</span>
               <span className="text-green-400">RKNN</span>
             </div>
-            <div className="flex justify-between">
-              <span>Modelo:</span>
-              <span className="text-blue-400">YOLOv8n</span>
-            </div>
           </div>
         </div>
       )}

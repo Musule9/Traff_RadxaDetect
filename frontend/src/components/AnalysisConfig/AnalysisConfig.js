@@ -215,7 +215,7 @@ const AnalysisConfig = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-gray-300">
           <div className="bg-gray-700 p-3 rounded">
             <p className="text-xs text-gray-400">Modelo</p>
-            <p className="font-medium">YOLOv8n + RKNN</p>
+            <p className="font-medium">YOLO11n + RKNN</p>
           </div>
           <div className="bg-gray-700 p-3 rounded">
             <p className="text-xs text-gray-400">Tracker</p>
