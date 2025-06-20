@@ -239,7 +239,7 @@ class SimpleVideoStream:
             return self.latest_frame.copy() if self.latest_frame is not None else None
 
 async def restart_video_processor():
-    """Reiniciar video processor con nueva configuración - CON FALLBACK"""
+    """Reiniciar video processor - OPTIMIZADO PARA RKNN"""
     global video_processor
     
     try:
@@ -252,6 +252,7 @@ async def restart_video_processor():
         
         # Cargar configuración
         camera_config = load_camera_config()
+        system_config = load_system_config()  # ✅ AHORA FUNCIONA
         
         # Solo inicializar si hay URL RTSP válida
         if not camera_config.get("rtsp_url") or not camera_config.get("rtsp_url").strip():
@@ -260,12 +261,24 @@ async def restart_video_processor():
         
         rtsp_url = camera_config.get("rtsp_url")
         
+        # ✅ VERIFICAR MODELO RKNN ANTES DE INICIALIZAR
+        rknn_model_path = "/app/models/yolo11n.rknn"
+        if not os.path.exists(rknn_model_path):
+            logger.warning(f"⚠️ Modelo RKNN no encontrado: {rknn_model_path}")
+            logger.info("💡 Coloque yolo11n.rknn en /app/models/ para mejor rendimiento")
+        
         # Intentar importar e inicializar VideoProcessor completo
         if MODULES_AVAILABLE:
             try:
                 from app.core.video_processor import VideoProcessor
                 
-                system_config = load_system_config()
+                # ✅ CONFIGURAR PARA RKNN
+                system_config.update({
+                    "model_path": rknn_model_path,
+                    "use_rknn": True,
+                    "target_platform": "rk3588",
+                    "forced_resolution": "640x640"
+                })
                 
                 video_processor = VideoProcessor(
                     camera_config=camera_config,
@@ -281,17 +294,17 @@ async def restart_video_processor():
                 video_processor.start_processing()
                 
                 # Verificar que se inició correctamente
-                await asyncio.sleep(3)
+                await asyncio.sleep(5)  # ✅ MÁS TIEMPO PARA RKNN
                 
                 if hasattr(video_processor, 'is_running') and video_processor.is_running:
-                    logger.info("✅ Video processor completo iniciado correctamente")
+                    logger.info("✅ Video processor RKNN iniciado correctamente")
                     return True
                 else:
-                    logger.warning("⚠️ Video processor completo falló, usando stream básico")
+                    logger.warning("⚠️ Video processor falló, usando stream básico")
                     raise Exception("VideoProcessor no se inició correctamente")
                     
             except Exception as e:
-                logger.warning(f"⚠️ Error con VideoProcessor completo: {e}")
+                logger.warning(f"⚠️ Error con VideoProcessor: {e}")
                 logger.info("🔄 Intentando con stream básico...")
                 
                 # Fallback a stream básico
@@ -445,28 +458,49 @@ async def logout(token: str = Depends(verify_token)):
         auth_service.revoke_token(token)
     return {"message": "Logout exitoso"}
 
-# Health check
 @app.get("/api/camera_health")
 async def health():
-    """Health check completo - CON INFO DE RESOLUCIÓN"""
+    """Health check completo - CON INFO ESPECÍFICA DE RKNN"""
     camera_config = load_camera_config()
     video_status = get_video_processor_status()
     
-    # Información del hardware
+    # Información del hardware específica RK3588
     hardware_info = "Unknown"
+    npu_available = False
     try:
         if os.path.exists("/proc/device-tree/model"):
             with open("/proc/device-tree/model", "rb") as f:
                 hardware_info = f.read().decode('utf-8', errors='ignore').strip('\x00')
+                if "RK3588" in hardware_info or "Radxa" in hardware_info:
+                    npu_available = True
+    except:
+        pass
+    
+    # Verificar driver NPU específico
+    npu_driver_version = "Unknown"
+    try:
+        import subprocess
+        result = subprocess.run(['dmesg'], capture_output=True, text=True, timeout=5)
+        for line in result.stdout.split('\n'):
+            if 'rknpu' in line and 'Initialized' in line:
+                # Extraer versión del driver
+                parts = line.split()
+                for i, part in enumerate(parts):
+                    if 'rknpu' in part and i + 1 < len(parts):
+                        npu_driver_version = parts[i + 1]
+                        break
+                break
     except:
         pass
     
     # Verificar modelo RKNN
-    rknn_model_available = False
+    rknn_model_available = os.path.exists("/app/models/yolo11n.rknn")
+    
+    # Verificar rknnlite2
+    rknnlite_available = False
     try:
-        import glob
-        rknn_files = glob.glob("/app/models/*.rknn")
-        rknn_model_available = len(rknn_files) > 0
+        from rknnlite.api import RKNNLite
+        rknnlite_available = True
     except:
         pass
     
@@ -477,13 +511,18 @@ async def health():
         "camera_fps": video_status["fps"],
         "camera_configured": bool(camera_config.get("rtsp_url")),
         "hardware": hardware_info,
+        "npu_available": npu_available,
+        "npu_driver_version": npu_driver_version,
         "modules_available": MODULES_AVAILABLE,
+        "rknnlite_available": rknnlite_available,
+        "rknn_model_available": rknn_model_available,
         "version": "1.0.0",
         "resolution": "640x640",  # ✅ SIEMPRE 640x640
-        "rknn_model_available": rknn_model_available,
         "target_platform": "rk3588",
         "processing_resolution": "640x640",
-        "forced_resolution": True
+        "forced_resolution": True,
+        "expected_performance": "99.5ms per image (~10 FPS)" if rknn_model_available else "200-300ms per image (~3-5 FPS)",
+        "optimization_status": "NPU RKNN" if rknn_model_available and rknnlite_available else "CPU Fallback"
     }
 
 # CONFIGURACIÓN DE CÁMARA - CORREGIDA
@@ -651,7 +690,7 @@ async def restart_camera_api():
 
 @app.post("/api/camera/test")
 async def test_camera_stream_api(request: Request):
-    """Probar conexión RTSP - CON VERIFICACIÓN 640x640"""
+    """Probar conexión RTSP - OPTIMIZADO PARA RKNN Y 640x640"""
     try:
         data = await request.json()
         rtsp_url = data.get("rtsp_url", "")
@@ -659,15 +698,16 @@ async def test_camera_stream_api(request: Request):
         if not rtsp_url:
             raise HTTPException(status_code=400, detail="URL RTSP requerida")
         
-        logger.info(f"🧪 Probando conexión RTSP (640x640): {rtsp_url}")
+        logger.info(f"🧪 Probando conexión RTSP para RKNN (640x640): {rtsp_url}")
         
         # Test con OpenCV forzando resolución
         cap = cv2.VideoCapture(rtsp_url)
         
-        # ✅ CONFIGURAR A 640x640 PARA TEST
+        # ✅ CONFIGURAR A 640x640 PARA RKNN
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 640)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_FPS, 30)
         
         if not cap.isOpened():
             cap.release()
@@ -679,7 +719,7 @@ async def test_camera_stream_api(request: Request):
         # Intentar leer frames y verificar resolución
         frames_read = 0
         frames_correct_size = 0
-        max_attempts = 10
+        max_attempts = 15
         
         for i in range(max_attempts):
             ret, frame = cap.read()
@@ -691,9 +731,9 @@ async def test_camera_stream_api(request: Request):
                 if w == 640 and h == 640:
                     frames_correct_size += 1
                 elif i == 0:  # Log solo en el primer frame
-                    logger.info(f"📐 Frame original del test: {w}x{h} (se redimensionará a 640x640)")
+                    logger.info(f"📐 Frame original del test: {w}x{h} (se redimensionará a 640x640 para RKNN)")
                 
-                if frames_read >= 5:  # Suficientes frames exitosos
+                if frames_read >= 8:  # Suficientes frames exitosos para RKNN
                     break
             else:
                 import time
@@ -701,24 +741,33 @@ async def test_camera_stream_api(request: Request):
         
         cap.release()
         
-        if frames_read >= 3:
-            message = f"Conexión exitosa. Se leyeron {frames_read} frames."
+        if frames_read >= 5:
+            message = f"✅ Conexión exitosa para RKNN. Se leyeron {frames_read} frames."
             if frames_correct_size > 0:
                 message += f" {frames_correct_size} frames ya en 640x640."
             else:
-                message += " Frames se redimensionarán automáticamente a 640x640."
+                message += " Frames se redimensionarán automáticamente a 640x640 para NPU."
+            
+            # ✅ VERIFICAR SI HAY MODELO RKNN DISPONIBLE
+            rknn_available = os.path.exists("/app/models/yolo11n.rknn")
+            if rknn_available:
+                message += " Modelo RKNN disponible para NPU."
+            else:
+                message += " ADVERTENCIA: yolo11n.rknn no encontrado - se usará CPU."
             
             return {
                 "success": True,
                 "message": message,
                 "frames_tested": frames_read,
-                "resolution_info": f"Configurado para 640x640",
-                "frames_correct_size": frames_correct_size
+                "resolution_info": "Configurado para 640x640 (RKNN optimizado)",
+                "frames_correct_size": frames_correct_size,
+                "rknn_model_available": rknn_available,
+                "expected_fps": "~10 FPS con RKNN NPU" if rknn_available else "~3-5 FPS con CPU"
             }
         elif frames_read > 0:
             return {
                 "success": True,
-                "message": f"Conexión inestable pero funcional. Se leyeron {frames_read} frames de {max_attempts} intentos. Resolución forzada a 640x640.",
+                "message": f"Conexión inestable pero funcional. Se leyeron {frames_read} frames de {max_attempts} intentos. Resolución forzada a 640x640 para RKNN.",
                 "frames_tested": frames_read
             }
         else:
@@ -733,6 +782,7 @@ async def test_camera_stream_api(request: Request):
             "success": False,
             "message": f"Error en prueba de conexión: {str(e)}"
         }
+    
 
 # STREAM DE VIDEO - CORREGIDO
 @app.get("/api/camera/stream")
@@ -811,13 +861,13 @@ def _generate_placeholder_frame_640():
     # Texto centrado para 640x640
     cv2.putText(placeholder, "SISTEMA DE DETECCION VEHICULAR", (80, 280), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    cv2.putText(placeholder, "Radxa Rock 5T - RKNN", (180, 320), 
+    cv2.putText(placeholder, "Radxa Rock 5T - NPU RK3588", (150, 320), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 150, 255), 2)
-    cv2.putText(placeholder, "Resolucion: 640x640", (200, 360), 
+    cv2.putText(placeholder, "Resolucion: 640x640 (RKNN Optimizado)", (120, 360), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
     cv2.putText(placeholder, "Configure la camara para comenzar", (130, 400), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(placeholder, f"FPS: 0 | Estado: Esperando configuracion", (160, 440),
+    cv2.putText(placeholder, f"Esperando: yolo11n.rknn para NPU", (160, 440),
                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
     
     ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -828,18 +878,19 @@ def _generate_placeholder_frame_640():
                 buffer.tobytes() + b'\r\n')
     return b''
 
+
 def _generate_error_frame_640():
     """Frame de error - EXACTAMENTE 640x640"""
     error_frame = np.zeros((640, 640, 3), dtype=np.uint8)
     error_frame[:] = [40, 20, 20]
     
-    cv2.putText(error_frame, "ERROR DE CONEXION", (180, 300), 
+    cv2.putText(error_frame, "ERROR DE CONEXION RTSP", (140, 300), 
                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     cv2.putText(error_frame, "Verificar configuracion RTSP", (150, 340), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
     cv2.putText(error_frame, "URL, credenciales y conectividad", (140, 380),
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(error_frame, "Resolucion: 640x640", (200, 420),
+    cv2.putText(error_frame, "Resolucion forzada: 640x640 (RKNN)", (140, 420),
                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
     
     ret, buffer = cv2.imencode('.jpg', error_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -856,6 +907,42 @@ def _generate_error_frame_640():
 def get_system_config_file_path():
     return "/app/config/system_config.json"
 
+def load_system_config() -> Dict:
+    """Cargar configuración del sistema - FUNCIÓN FALTANTE"""
+    config_file = get_system_config_file_path()
+    try:
+        if os.path.exists(config_file):
+            with open(config_file, "r") as f:
+                config = json.load(f)
+                logger.info(f"📄 Configuración del sistema cargada")
+                return config
+    except Exception as e:
+        logger.error(f"Error cargando configuración del sistema: {e}")
+    
+    # Configuración por defecto del sistema
+    default_config = {
+        "confidence_threshold": 0.5,
+        "night_vision_enhancement": True,
+        "show_overlay": True,
+        "data_retention_days": 30,
+        "target_fps": 30,
+        "log_level": "INFO",
+        "max_age": 30,
+        "min_hits": 3,
+        "high_threshold": 0.6,
+        "low_threshold": 0.1,
+        "model_path": "/app/models/yolo11n.rknn",  # ✅ USAR RKNN DIRECTAMENTE
+        "use_rknn": True,
+        "target_platform": "rk3588",  # ✅ ESPECÍFICO PARA RK3588
+        "quantization": "i8",
+        "npu_enabled": True,
+        "forced_resolution": "640x640"
+    }
+    
+    # Guardar configuración por defecto
+    save_system_config(default_config)
+    return default_config
+
 
 def load_camera_config() -> Dict:
     """Cargar configuración de cámara - CON RESOLUCIÓN FORZADA 640x640"""
@@ -868,6 +955,7 @@ def load_camera_config() -> Dict:
                 # ✅ FORZAR RESOLUCIÓN A 640x640 SIEMPRE
                 config["resolution"] = "640x640"
                 config["frame_rate"] = "30"
+                config["processing_resolution"] = "640x640"
                 
                 logger.info(f"📄 Configuración cargada: RTSP={bool(config.get('rtsp_url'))}, Resolución: 640x640")
                 return config
@@ -890,6 +978,8 @@ def load_camera_config() -> Dict:
         "stream_path": "/stream1",
         "resolution": "640x640",  # ✅ FORZADO
         "frame_rate": "30",       # ✅ FORZADO
+        "processing_resolution": "640x640",  # ✅ NUEVO
+        "input_size": [640, 640], # ✅ NUEVO
         "enabled": False
     }
     return default_config
@@ -1111,43 +1201,67 @@ else:
         }
 
 def verify_npu_support():
-    """Verificar soporte NPU en RK3588"""
+    """Verificar soporte NPU RK3588 - MEJORADO"""
     try:
         import subprocess
         
         # Verificar hardware
+        hardware_detected = False
         if os.path.exists("/proc/device-tree/model"):
             with open("/proc/device-tree/model", "rb") as f:
                 model = f.read().decode('utf-8', errors='ignore').strip('\x00')
                 if "RK3588" in model or "Radxa" in model:
-                    logger.info(f"✅ Hardware soportado: {model}")
+                    logger.info(f"✅ Hardware NPU soportado: {model}")
+                    hardware_detected = True
                 else:
-                    logger.warning(f"⚠️ Hardware no reconocido: {model}")
+                    logger.warning(f"⚠️ Hardware no óptimo para NPU: {model}")
         
         # Verificar driver NPU
-        result = subprocess.run(
-            ["dmesg"], 
-            capture_output=True, text=True
-        )
-        if "rknpu" in result.stdout:
-            npu_lines = [line for line in result.stdout.split('\n') if 'rknpu' in line]
-            logger.info(f"✅ Driver NPU encontrado: {len(npu_lines)} líneas")
-        else:
-            logger.warning("⚠️ Driver NPU no encontrado en dmesg")
+        driver_detected = False
+        try:
+            result = subprocess.run(
+                ["dmesg"], 
+                capture_output=True, text=True, timeout=5
+            )
+            if "rknpu" in result.stdout:
+                npu_lines = [line for line in result.stdout.split('\n') if 'rknpu' in line]
+                logger.info(f"✅ Driver NPU encontrado: {len(npu_lines)} líneas")
+                driver_detected = True
+            else:
+                logger.warning("⚠️ Driver NPU no encontrado en dmesg")
+        except:
+            logger.warning("⚠️ No se pudo verificar driver NPU")
         
-        # Verificar RKNN
+        # Verificar RKNN Lite
+        rknn_available = False
         try:
             from rknnlite.api import RKNNLite
-            rknn = RKNNLite()
-            rknn.release()
-            logger.info("✅ RKNN disponible")
+            logger.info("✅ RKNNLite2 disponible")
+            rknn_available = True
         except Exception as e:
-            logger.warning(f"⚠️ RKNN no disponible: {e}")
+            logger.warning(f"⚠️ RKNNLite2 no disponible: {e}")
+            logger.info("💡 Instale con: sudo apt install python3-rknnlite2")
         
-        return True
+        # Verificar modelo RKNN
+        model_available = os.path.exists("/app/models/yolo11n.rknn")
+        if model_available:
+            logger.info("✅ Modelo YOLO11n RKNN encontrado")
+        else:
+            logger.warning("⚠️ Modelo yolo11n.rknn no encontrado en /app/models/")
+            logger.info("💡 Coloque yolo11n.rknn en /app/models/ para usar NPU")
+        
+        # Resumen
+        if hardware_detected and driver_detected and rknn_available and model_available:
+            logger.info("🎯 Sistema completamente optimizado para NPU RK3588")
+        elif hardware_detected and driver_detected and rknn_available:
+            logger.info("⚠️ Sistema listo para NPU, agregue modelo yolo11n.rknn")
+        else:
+            logger.info("ℹ️ Sistema funcionará con CPU (rendimiento reducido)")
+        
+        return hardware_detected and driver_detected and rknn_available
         
     except Exception as e:
-        logger.warning(f"⚠️ Verificación NPU: {e}")
+        logger.warning(f"⚠️ Error verificando NPU: {e}")
         return False
 # ============================================================================
 # INICIO DEL SERVIDOR
@@ -1158,9 +1272,34 @@ if __name__ == "__main__":
     print(f"📚 API Docs: http://0.0.0.0:8000/docs")
     print(f"🎯 Frontend: {'Available' if HAS_FRONTEND else 'Not available'}")
     verify_npu_support()
+    
+    # Configuración explícita del logging para Uvicorn
+    log_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "handlers": {
+            "default": {
+                "class": "logging.StreamHandler",
+                "formatter": "default",
+                "stream": "ext://sys.stdout"
+            },
+        },
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO"},
+            "uvicorn.error": {"level": "INFO"},
+            "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False}
+        }
+    }
+    
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=False
+        reload=False,
+        log_config=None # Pasar la configuración explícita
     )

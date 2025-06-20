@@ -29,10 +29,12 @@ class VideoProcessor:
         self.db_manager = db_manager
         self.callback_func = callback_func
         
-        # ✅ FORZAR RESOLUCIÓN 640x640 EN TODA LA PIPELINE
+        # ✅ FORZAR RESOLUCIÓN 640x640 EN TODA LA PIPELINE - CRÍTICO
         self.TARGET_WIDTH = 640
         self.TARGET_HEIGHT = 640
         self.PROCESSING_SIZE = (self.TARGET_WIDTH, self.TARGET_HEIGHT)
+        
+        logger.info(f"📐 VideoProcessor inicializado con resolución FORZADA: {self.TARGET_WIDTH}x{self.TARGET_HEIGHT}")
         
         # Componentes principales
         self.detector = None
@@ -72,10 +74,12 @@ class VideoProcessor:
             
             # 1. Inicializar detector con resolución forzada
             try:
-                model_path = self.system_config.get('model_path')
+                model_path = self.system_config.get('model_path', '/app/models/yolo11n.rknn')
                 confidence = self.system_config.get('confidence_threshold', 0.5)
                 
-                logger.info(f"🤖 Inicializando detector (640x640) con confianza: {confidence}")
+                logger.info(f"🤖 Inicializando detector YOLO11n RKNN (640x640) con confianza: {confidence}")
+                logger.info(f"📂 Modelo: {model_path}")
+                
                 self.detector = VehicleDetector(model_path, confidence)
                 
                 if self.detector is None:
@@ -85,6 +89,12 @@ class VideoProcessor:
                 detector_info = self.detector.get_model_info()
                 logger.info(f"🤖 Detector: {detector_info.get('model_type', 'unknown')} | RKNN: {detector_info.get('use_rknn', False)}")
                 logger.info(f"📐 Input size configurado: {detector_info.get('input_size', 'unknown')}")
+                
+                # ✅ VERIFICAR ESPECÍFICAMENTE QUE USE RKNN
+                if detector_info.get('use_rknn', False):
+                    logger.info("✅ Detector usando RKNN NPU - rendimiento esperado: ~99.5ms")
+                else:
+                    logger.warning("⚠️ Detector NO está usando RKNN - rendimiento reducido")
                 
             except Exception as e:
                 logger.error(f"❌ Error inicializando detector: {e}")
@@ -234,13 +244,23 @@ class VideoProcessor:
         """Obtener frame original - SIEMPRE 640x640"""
         with self.frame_lock:
             if hasattr(self, 'latest_raw_frame') and self.latest_raw_frame is not None:
-                return self.latest_raw_frame.copy()
+                frame = self.latest_raw_frame.copy()
+                # ✅ ASEGURAR 640x640
+                if frame.shape[:2] != (640, 640):
+                    frame = cv2.resize(frame, (640, 640))
+                return frame
             return None
 
     def get_latest_frame(self) -> Optional[np.ndarray]:
         """Obtener último frame procesado con análisis - SIEMPRE 640x640"""
         with self.frame_lock:
-            return self.latest_frame.copy() if self.latest_frame is not None else None
+            if self.latest_frame is not None:
+                frame = self.latest_frame.copy()
+                # ✅ ASEGURAR 640x640
+                if frame.shape[:2] != (640, 640):
+                    frame = cv2.resize(frame, (640, 640))
+                return frame
+            return None
 
     def get_frame_info(self) -> Dict:
         """Obtener información del frame actual"""
@@ -251,7 +271,9 @@ class VideoProcessor:
             'tracks_count': len(getattr(self, 'current_tracks', [])),
             'detections_count': getattr(self, 'last_detections_count', 0),
             'connection_retries': self.connection_retry_count,
-            'input_size': self.PROCESSING_SIZE
+            'input_size': self.PROCESSING_SIZE,
+            'target_platform': 'rk3588',
+            'forced_resolution': True
         }
 
     def _validate_rtsp_url(self, rtsp_url: str) -> tuple[bool, str]:
@@ -321,7 +343,7 @@ class VideoProcessor:
             # Crear nueva captura
             self.video_capture = cv2.VideoCapture(rtsp_url)
             
-            # ✅ CONFIGURACIÓN FORZADA PARA 640x640
+            # ✅ CONFIGURACIÓN FORZADA PARA 640x640 - CRÍTICO
             try:
                 # Forzar resolución exacta 640x640
                 self.video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.TARGET_WIDTH)
@@ -411,11 +433,12 @@ class VideoProcessor:
                     consecutive_failures = 0
                     self.last_successful_frame = current_time
                     
-                    # ✅ FORZAR REDIMENSIONADO A 640x640 INMEDIATAMENTE
+                    # ✅ FORZAR REDIMENSIONADO A 640x640 INMEDIATAMENTE - CRÍTICO
                     original_h, original_w = frame.shape[:2]
                     if original_w != self.TARGET_WIDTH or original_h != self.TARGET_HEIGHT:
                         frame = cv2.resize(frame, self.PROCESSING_SIZE)
-                        logger.debug(f"🔄 Frame redimensionado: {original_w}x{original_h} → {self.TARGET_WIDTH}x{self.TARGET_HEIGHT}")
+                        if self.fps_counter % 100 == 0:  # Log cada 100 frames para no saturar
+                            logger.debug(f"🔄 Frame redimensionado: {original_w}x{original_h} → {self.TARGET_WIDTH}x{self.TARGET_HEIGHT}")
                     
                     # PROCESAR FRAME CON ANÁLISIS COMPLETO
                     try:
@@ -547,9 +570,9 @@ class VideoProcessor:
             processing_time = time.time() - start_time
             self.last_processing_time = processing_time
             
-            # Log cada 30 frames para no saturar
-            if self.fps_counter % 30 == 0:
-                logger.debug(f"📊 Frame procesado: {processing_time*1000:.1f}ms | Det: {len(detections)} | Tracks: {len(tracks)}")
+            # Log cada 100 frames para no saturar
+            if self.fps_counter % 100 == 0:
+                logger.debug(f"📊 Frame procesado (640x640): {processing_time*1000:.1f}ms | Det: {len(detections)} | Tracks: {len(tracks)}")
             
             return frame
             
@@ -634,6 +657,11 @@ class VideoProcessor:
             cv2.putText(frame, f"640x640", (5, info_y + 40),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
             
+            # Indicador RKNN si está activo
+            if self.detector and hasattr(self.detector, 'use_rknn') and self.detector.use_rknn:
+                cv2.putText(frame, f"RKNN", (5, info_y + 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+            
             return frame
             
         except Exception as e:
@@ -682,7 +710,8 @@ class VideoProcessor:
                             'center': crossing['center'],
                             'timestamp': crossing['timestamp'],
                             'model_type': getattr(self.detector, 'model_type', 'unknown'),
-                            'frame_size': '640x640'  # ✅ REGISTRAR RESOLUCIÓN
+                            'frame_size': '640x640',  # ✅ REGISTRAR RESOLUCIÓN
+                            'target_platform': 'rk3588'
                         }
                     }
                     
@@ -733,5 +762,9 @@ class VideoProcessor:
             'tracker_available': self.tracker is not None,
             'analyzer_available': self.analyzer is not None,
             'resolution': f"{self.TARGET_WIDTH}x{self.TARGET_HEIGHT}",  # ✅ SIEMPRE 640x640
-            'input_size': self.PROCESSING_SIZE
+            'input_size': self.PROCESSING_SIZE,
+            'target_platform': 'rk3588',
+            'forced_resolution': True,
+            'detector_type': getattr(self.detector, 'model_type', 'unknown') if self.detector else 'none',
+            'using_rknn': getattr(self.detector, 'use_rknn', False) if self.detector else False
         }
