@@ -16,6 +16,7 @@ services:
       - /dev:/dev
       - /sys:/sys:ro
       - /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro
+      - /usr/lib/librknnrt.so:/usr/lib/librknnrt.so:ro
     devices:
       - /dev/dri:/dev/dri
       - /dev/mali0:/dev/mali0
@@ -25,4 +26,6 @@ services:
     environment:
       - USE_RKNN=1
       - PYTHONPATH=/app
-      - LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu
+      - LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/usr/lib
+      - OPENCV_LOG_LEVEL=ERROR
+    network_mode: "host" 

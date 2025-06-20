@@ -2,6 +2,7 @@ sudo apt update
 sudo apt-get install python3-pip python3-dev python3-opencv python3-numpy python3-setuptools
 sudo apt install rknpu2-rk3588 python3-rknnlite2
 
+rsetup overlays enable Arm Mali GPU Driver 
 
 #BUILEAR NPM
 npm run build
@@ -62,3 +63,44 @@ docker run -d \
 # 4. Verificar funcionamiento
 sleep 10
 curl http://localhost:8000/api/camera_health
+
+
+COMANDOS:
+#!/bin/bash
+set -e
+
+# 1. Limpiar
+docker stop vehicle-detection-rknn 2>/dev/null || true
+docker rm vehicle-detection-rknn 2>/dev/null || true
+docker rmi vehicle-detection-rknn 2>/dev/null || true
+
+# 2. Build
+docker build --no-cache -t vehicle-detection-rknn .
+
+# 3. Run
+docker run -d \
+  --name vehicle-detection-rknn \
+  --restart unless-stopped \
+  --privileged \
+  -p 8000:8000 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/config:/app/config \
+  -v $(pwd)/models:/app/models \
+  -v $(pwd)/logs:/app/logs \
+  -v /dev:/dev \
+  -v /sys:/sys:ro \
+  -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro \
+  --device=/dev/dri:/dev/dri \
+  --device=/dev/mali0:/dev/mali0 \
+  --device=/dev/dma_heap:/dev/dma_heap \
+  --device=/dev/rga:/dev/rga \
+  --device=/dev/mpp_service:/dev/mpp_service \
+  -e USE_RKNN=1 \
+  -e PYTHONPATH=/app \
+  vehicle-detection-rknn
+
+# 4. Esperar arranque
+sleep 5
+curl http://localhost:8000/api/camera_health || echo "⚠️ Falló conexión"
+
+

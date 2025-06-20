@@ -31,20 +31,26 @@ class Zone:
     zone_type: str = "red_light"
 
 class TrafficAnalyzer:
-    """Analizador de tráfico para conteo, velocidad y zona roja"""
+    """Analizador de tráfico para conteo, velocidad y zona roja - CORREGIDO"""
     
     def __init__(self):
         self.lines: List[Line] = []
         self.zones: List[Zone] = []
         self.vehicle_line_crossings = {}  # {vehicle_id: {line_id: timestamp}}
         self.vehicle_speeds = {}  # {vehicle_id: speed_kmh}
-        self.vehicle_lanes = {}  # FALTA
-        self.vehicle_last_line = {}  # FALTA
+        
+        # ✅ VARIABLES FALTANTES AGREGADAS:
+        self.vehicle_lanes = {}  # {vehicle_id: lane}
+        self.vehicle_last_line = {}  # {vehicle_id: last_line_id}
+        
         self.red_light_active = False
         self.vehicles_in_red_zone = set()
         self.red_light_start_time = None
         self.red_light_vehicles_start = 0
         self.analytic_sent_this_cycle = False
+        
+        # Contador para limpieza periódica
+        self._frame_count = 0
 
     def cleanup_old_vehicles(self, max_age_seconds: int = 100):
         """Limpiar vehículos antiguos para evitar memory leak - VERSIÓN CORREGIDA"""
@@ -58,14 +64,11 @@ class TrafficAnalyzer:
                     vehicles_to_remove.append(vehicle_id)
         
         for vehicle_id in vehicles_to_remove:
+            # Limpiar todas las estructuras de datos
             self.vehicle_line_crossings.pop(vehicle_id, None)
-            # ✅ VERIFICAR EXISTENCIA ANTES DE ELIMINAR:
-            if hasattr(self, 'vehicle_lanes'):
-                self.vehicle_lanes.pop(vehicle_id, None)
-            if hasattr(self, 'vehicle_speeds'):
-                self.vehicle_speeds.pop(vehicle_id, None)
-            if hasattr(self, 'vehicle_last_line'):
-                self.vehicle_last_line.pop(vehicle_id, None)
+            self.vehicle_lanes.pop(vehicle_id, None)
+            self.vehicle_speeds.pop(vehicle_id, None)
+            self.vehicle_last_line.pop(vehicle_id, None)
 
     def add_line(self, line: Line):
         """Agregar línea de conteo o velocidad"""
@@ -137,11 +140,7 @@ class TrafficAnalyzer:
             self.analytic_sent_this_cycle = True
         
         # Limpiar vehículos antiguos cada 100 análisis
-        if hasattr(self, '_frame_count'):
-            self._frame_count += 1
-        else:
-            self._frame_count = 0
-
+        self._frame_count += 1
         if self._frame_count % 100 == 0:
             self.cleanup_old_vehicles()
 
@@ -149,12 +148,16 @@ class TrafficAnalyzer:
     
     def _update_vehicle_lane(self, vehicle_id: int, line_id: str):
         """Actualizar carril del vehículo basado en línea cruzada"""
+        # Inicializar si no existe
         if vehicle_id not in self.vehicle_lanes:
             # Encontrar la línea y asignar su carril
             for line in self.lines:
                 if line.id == line_id:
                     self.vehicle_lanes[vehicle_id] = line.lane
                     break
+            else:
+                # Si no se encuentra la línea, asignar carril por defecto
+                self.vehicle_lanes[vehicle_id] = 'carril_1'
 
     def _check_line_crossings(self, vehicle_id: int, center: Tuple[float, float], 
                             current_time: float) -> List[Dict]:
@@ -173,7 +176,11 @@ class TrafficAnalyzer:
                 if line_id not in self.vehicle_line_crossings[vehicle_id]:
                     self.vehicle_line_crossings[vehicle_id][line_id] = current_time
                     
+                    # Actualizar carril del vehículo
                     self._update_vehicle_lane(vehicle_id, line_id)
+                    
+                    # Actualizar última línea cruzada
+                    self.vehicle_last_line[vehicle_id] = line_id
 
                     crossings.append({
                         'vehicle_id': vehicle_id,
@@ -269,8 +276,8 @@ class TrafficAnalyzer:
         
         distance = abs((y2 - y1) * x - (x2 - x1) * y + x2 * y1 - y2 * x1) / line_length
         
-        # Considerar cruce si está muy cerca de la línea (menos de 10 píxeles)
-        return distance < 10
+        # Considerar cruce si está muy cerca de la línea (menos de 15 píxeles)
+        return distance < 15
     
     def _point_in_red_zones(self, point: Tuple[float, float]) -> bool:
         """Verificar si punto está en zona roja"""
@@ -302,19 +309,33 @@ class TrafficAnalyzer:
         return inside
     
     def draw_analysis_overlay(self, frame: np.ndarray, tracks: List) -> np.ndarray:
-        """Dibujar overlay de análisis en frame"""
+        """Dibujar overlay de análisis en frame - MEJORADO"""
         overlay = frame.copy()
         
         # Dibujar líneas
         for line in self.lines:
             color = (0, 255, 0) if line.line_type == LineType.COUNTING else (0, 255, 255)
-            cv2.line(overlay, line.points[0], line.points[1], color, 3)
+            thickness = 3
             
-            # Etiqueta de línea
+            # Línea principal
+            cv2.line(overlay, line.points[0], line.points[1], color, thickness)
+            
+            # Etiqueta de línea con fondo
             mid_point = ((line.points[0][0] + line.points[1][0]) // 2,
                         (line.points[0][1] + line.points[1][1]) // 2)
-            cv2.putText(overlay, f"{line.name} ({line.lane})", 
-                       (mid_point[0], mid_point[1] - 10),
+            
+            label = f"{line.name} ({line.lane})"
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+            
+            # Fondo del texto
+            cv2.rectangle(overlay, 
+                         (mid_point[0] - label_size[0]//2 - 5, mid_point[1] - label_size[1] - 10),
+                         (mid_point[0] + label_size[0]//2 + 5, mid_point[1] + 5),
+                         (0, 0, 0), -1)
+            
+            # Texto
+            cv2.putText(overlay, label, 
+                       (mid_point[0] - label_size[0]//2, mid_point[1] - 5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         
         # Dibujar zonas
@@ -322,39 +343,113 @@ class TrafficAnalyzer:
             if zone.zone_type == "red_light":
                 color = (0, 0, 255) if self.red_light_active else (100, 100, 100)
                 points = np.array(zone.points, np.int32)
-                cv2.fillPoly(overlay, [points], color + (50,))  # Semi-transparente
-                cv2.polylines(overlay, [points], True, color, 2)
+                
+                # Zona semi-transparente
+                zone_overlay = overlay.copy()
+                cv2.fillPoly(zone_overlay, [points], color)
+                cv2.addWeighted(overlay, 0.7, zone_overlay, 0.3, 0, overlay)
+                
+                # Borde de la zona
+                cv2.polylines(overlay, [points], True, color, 3)
+                
+                # Etiqueta de zona
+                if len(zone.points) > 0:
+                    center_x = int(sum(p[0] for p in zone.points) / len(zone.points))
+                    center_y = int(sum(p[1] for p in zone.points) / len(zone.points))
+                    
+                    zone_label = f"{zone.name}"
+                    if self.red_light_active:
+                        zone_label += f" - {len(self.vehicles_in_red_zone)} veh"
+                    
+                    cv2.putText(overlay, zone_label, (center_x - 50, center_y),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        # Dibujar tracks
+        # Dibujar tracks con información mejorada
         for track in tracks:
             x, y, w, h = [int(v) for v in track.bbox]
             
             # Color según si está en zona roja
             in_red_zone = track.track_id in self.vehicles_in_red_zone
-            color = (0, 0, 255) if in_red_zone else (0, 255, 0)
+            if in_red_zone:
+                color = (0, 0, 255)  # Rojo
+                thickness = 3
+            else:
+                color = (0, 255, 0)  # Verde
+                thickness = 2
             
             # Bounding box
-            cv2.rectangle(overlay, (x, y), (x + w, y + h), color, 2)
+            cv2.rectangle(overlay, (x, y), (x + w, y + h), color, thickness)
             
-            # ID y velocidad
-            label = f"ID:{track.track_id}"
-            if track.track_id in self.vehicle_speeds:
-                speed = self.vehicle_speeds[track.track_id]
-                label += f" {speed:.1f}km/h"
+            # Información del vehículo
+            vehicle_id = track.track_id
             
-            cv2.putText(overlay, label, (x, y - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            # Línea 1: ID y velocidad
+            label1 = f"ID:{vehicle_id}"
+            
+            # Buscar velocidad más reciente
+            latest_speed = None
+            for speed_key, speed_value in self.vehicle_speeds.items():
+                if str(vehicle_id) in speed_key:
+                    latest_speed = speed_value
+                    break
+            
+            if latest_speed:
+                label1 += f" {latest_speed:.1f}km/h"
+            
+            # Línea 2: Carril y estado
+            label2 = ""
+            if vehicle_id in self.vehicle_lanes:
+                label2 += f"Carril: {self.vehicle_lanes[vehicle_id]}"
+            
+            if in_red_zone:
+                label2 += " ROJO!"
+            
+            # Dibujar etiquetas con fondo
+            y_offset = y - 10
+            for i, label in enumerate([label1, label2]):
+                if label.strip():
+                    label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+                    
+                    # Fondo
+                    cv2.rectangle(overlay, 
+                                 (x, y_offset - 15 - i*20),
+                                 (x + label_size[0] + 10, y_offset - i*20),
+                                 (0, 0, 0), -1)
+                    
+                    # Texto
+                    cv2.putText(overlay, label, (x + 2, y_offset - 5 - i*20),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
         
-        # Información de estado
+        # Información de estado en la esquina
         status_y = 30
+        info_bg_color = (0, 0, 0)
+        
+        # Estado del semáforo
+        semaforo_text = f"SEMAFORO: {'ROJO' if self.red_light_active else 'VERDE/AMARILLO'}"
+        semaforo_color = (0, 0, 255) if self.red_light_active else (0, 255, 0)
+        
+        # Fondo para estado
+        text_size = cv2.getTextSize(semaforo_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+        cv2.rectangle(overlay, (5, 5), (text_size[0] + 15, 35), info_bg_color, -1)
+        cv2.putText(overlay, semaforo_text, (10, status_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, semaforo_color, 2)
+        
+        status_y += 35
+        
+        # Información de vehículos en zona
         if self.red_light_active:
-            cv2.putText(overlay, "SEMAFORO: ROJO", (10, status_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            vehiculos_text = f"Vehiculos en zona roja: {len(self.vehicles_in_red_zone)}"
+            text_size = cv2.getTextSize(vehiculos_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+            cv2.rectangle(overlay, (5, status_y - 15), (text_size[0] + 15, status_y + 10), info_bg_color, -1)
+            cv2.putText(overlay, vehiculos_text, (10, status_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             status_y += 30
-            cv2.putText(overlay, f"Vehiculos en zona: {len(self.vehicles_in_red_zone)}", 
-                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        else:
-            cv2.putText(overlay, "SEMAFORO: VERDE/AMARILLO", (10, status_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        
+        # Estadísticas generales
+        stats_text = f"Tracks: {len(tracks)} | Lineas: {len(self.lines)} | Zonas: {len(self.zones)}"
+        text_size = cv2.getTextSize(stats_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+        cv2.rectangle(overlay, (5, status_y - 10), (text_size[0] + 15, status_y + 15), info_bg_color, -1)
+        cv2.putText(overlay, stats_text, (10, status_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         return overlay

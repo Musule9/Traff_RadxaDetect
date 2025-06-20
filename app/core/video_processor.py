@@ -16,7 +16,7 @@ from .analyzer import TrafficAnalyzer
 from .database import DatabaseManager
 
 class VideoProcessor:
-    """Procesador principal de video con RTSP - CORREGIDO para OpenCV moderno"""
+    """Procesador principal de video con RTSP - TOTALMENTE CORREGIDO"""
     
     def __init__(self, 
                  camera_config: Dict,
@@ -54,40 +54,90 @@ class VideoProcessor:
         self.max_retries = 5
         self.last_successful_frame = time.time()
         
+        # Estadísticas de procesamiento
+        self.last_processing_time = 0
+        self.last_detections_count = 0
+        self.current_tracks = []
+        self.loop = None
+
     async def initialize(self):
-        """Inicializar todos los componentes"""
+        """Inicializar todos los componentes - COMPLETAMENTE CORREGIDO"""
         try:
-            # Inicializar detector con YOLO11n
-            model_path = self.system_config.get('model_path')
-            confidence = self.system_config.get('confidence_threshold', 0.5)
-            self.detector = VehicleDetector(model_path, confidence)
+            logger.info("🔄 Inicializando VideoProcessor...")
             
-            # Log información del modelo
-            model_info = self.detector.get_model_info()
-            logger.info(f"🤖 Detector: {model_info['model_type']} | RKNN: {model_info['use_rknn']}")
+            # 1. Inicializar detector con YOLO11n
+            try:
+                model_path = self.system_config.get('model_path')
+                confidence = self.system_config.get('confidence_threshold', 0.5)
+                
+                logger.info(f"🤖 Inicializando detector con confianza: {confidence}")
+                self.detector = VehicleDetector(model_path, confidence)
+                
+                # Verificar que el detector se inicializó correctamente
+                if self.detector is None:
+                    raise Exception("Detector no se pudo inicializar")
+                
+                # Log información del modelo - SIN ACCEDER A ATRIBUTOS INEXISTENTES
+                try:
+                    model_info = self.detector.get_model_info()
+                    logger.info(f"🤖 Detector: {model_info.get('model_type', 'unknown')} | RKNN: {model_info.get('use_rknn', False)}")
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo obtener info del modelo: {e}")
+                    logger.info(f"🤖 Detector inicializado con tipo: {getattr(self.detector, 'model_type', 'unknown')}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error inicializando detector: {e}")
+                raise Exception(f"Error inicializando detector: {e}")
             
-            # Inicializar tracker
-            self.tracker = BYTETracker(
-                high_thresh=self.system_config.get('high_threshold', 0.6),
-                low_thresh=self.system_config.get('low_threshold', 0.1),
-                max_age=self.system_config.get('max_age', 30)
-            )
+            # 2. Inicializar tracker
+            try:
+                logger.info("📍 Inicializando tracker...")
+                self.tracker = BYTETracker(
+                    high_thresh=self.system_config.get('high_threshold', 0.6),
+                    low_thresh=self.system_config.get('low_threshold', 0.1),
+                    max_age=self.system_config.get('max_age', 30)
+                )
+                if self.tracker is None:
+                    raise Exception("Tracker no se pudo inicializar")
+                logger.info("✅ Tracker inicializado")
+            except Exception as e:
+                logger.error(f"❌ Error inicializando tracker: {e}")
+                raise Exception(f"Error inicializando tracker: {e}")
             
-            # Inicializar analizador
-            self.analyzer = TrafficAnalyzer()
+            # 3. Inicializar analizador
+            try:
+                logger.info("📊 Inicializando analizador...")
+                self.analyzer = TrafficAnalyzer()
+                if self.analyzer is None:
+                    raise Exception("Analyzer no se pudo inicializar")
+                logger.info("✅ Analizador inicializado")
+            except Exception as e:
+                logger.error(f"❌ Error inicializando analizador: {e}")
+                raise Exception(f"Error inicializando analizador: {e}")
             
-            # Cargar configuración de líneas y zonas
-            await self._load_analysis_config()
+            # 4. Cargar configuración de líneas y zonas
+            try:
+                await self._load_analysis_config()
+            except Exception as e:
+                logger.warning(f"⚠️ Error cargando configuración de análisis: {e}")
             
-            # Inicializar base de datos del día
-            await self.db_manager.init_daily_database()
+            # 5. Inicializar base de datos del día
+            try:
+                if self.db_manager:
+                    await self.db_manager.init_daily_database()
+                    logger.info("✅ Base de datos inicializada")
+            except Exception as e:
+                logger.warning(f"⚠️ Error inicializando base de datos: {e}")
             
-            logger.info("VideoProcessor inicializado correctamente")
+            logger.info("✅ VideoProcessor inicializado correctamente")
             
         except Exception as e:
-            logger.error(f"Error inicializando VideoProcessor: {e}")
+            logger.error(f"❌ Error inicializando VideoProcessor: {e}")
             raise
     
+    def set_event_loop(self, loop: asyncio.AbstractEventLoop):
+        self.loop = loop
+
     async def _load_analysis_config(self):
         """Cargar configuración de análisis desde archivo"""
         try:
@@ -164,7 +214,7 @@ class VideoProcessor:
         self.processing_thread.daemon = True
         self.processing_thread.start()
         
-        logger.info("Procesamiento de video iniciado")
+        logger.info("✅ Procesamiento de video iniciado")
     
     def stop_processing(self):
         """Detener procesamiento de video"""
@@ -179,7 +229,7 @@ class VideoProcessor:
         if self.processing_thread:
             self.processing_thread.join(timeout=5)
         
-        logger.info("Procesamiento de video detenido")
+        logger.info("⏹️ Procesamiento de video detenido")
     
     def get_raw_frame(self) -> Optional[np.ndarray]:
         """Obtener frame original sin overlay de análisis"""
@@ -275,18 +325,14 @@ class VideoProcessor:
             # Crear nueva captura con configuración optimizada
             self.video_capture = cv2.VideoCapture(rtsp_url)
             
-            # CONFIGURACIÓN CORREGIDA para OpenCV moderno
-            # No usar CAP_PROP_BUFFER_SIZE que fue deprecado
+            # Configuración optimizada para OpenCV
             try:
-                # Configuraciones que SÍ funcionan en OpenCV moderno
                 self.video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 self.video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                 self.video_capture.set(cv2.CAP_PROP_FPS, 30)
                 
-                # Estas configuraciones son opcionales y pueden no estar disponibles
-                # Se intentan pero no fallan si no están soportadas
+                # Intentar configurar buffer si está disponible
                 try:
-                    # Intentar configurar buffer si está disponible (backend dependiente)
                     buffer_set = self.video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     if buffer_set:
                         logger.info("✅ Buffer size configurado")
@@ -333,7 +379,7 @@ class VideoProcessor:
 
     def _main_processing_loop(self):
         """Loop principal de procesamiento una vez conectado"""
-        logger.info("🎬 Iniciando procesamiento de frames...")
+        logger.info("🎬 Iniciando procesamiento de frames con análisis completo...")
         
         # Variables para control de FPS
         target_fps = self.system_config.get('target_fps', 30)
@@ -359,19 +405,27 @@ class VideoProcessor:
                     consecutive_failures = 0
                     self.last_successful_frame = current_time
                     
-                    # Procesar frame
-                    processed_frame = self._process_frame(frame)
-                    
-                    # Actualizar frame compartido para web
-                    with self.frame_lock:
-                        self.latest_frame = processed_frame
-                        self.latest_raw_frame = frame.copy()
-                    
-                    # Actualizar FPS
-                    self._update_fps()
-                    
-                    last_frame_time = current_time
-                    
+                    # PROCESAR FRAME CON ANÁLISIS COMPLETO
+                    try:
+                        processed_frame = self._process_frame_with_analysis(frame)
+                        
+                        # Actualizar frame compartido para web
+                        with self.frame_lock:
+                            self.latest_frame = processed_frame
+                            self.latest_raw_frame = frame.copy()
+                        
+                        # Actualizar FPS
+                        self._update_fps()
+                        
+                        last_frame_time = current_time
+                        
+                    except Exception as processing_error:
+                        logger.error(f"❌ Error procesando frame: {processing_error}")
+                        # Usar frame original si falla el procesamiento
+                        with self.frame_lock:
+                            self.latest_frame = frame
+                            self.latest_raw_frame = frame.copy()
+                
                 else:
                     # Frame fallido
                     consecutive_failures += 1
@@ -397,8 +451,8 @@ class VideoProcessor:
         
         logger.info("🔚 Loop de procesamiento terminado")
     
-    def _process_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Procesar frame individual"""
+    def _process_frame_with_analysis(self, frame: np.ndarray) -> np.ndarray:
+        """Procesar frame con análisis completo de IA"""
         start_time = time.time()
         
         try:
@@ -406,23 +460,54 @@ class VideoProcessor:
             if self.system_config.get('night_vision_enhancement', False):
                 frame = self.detector.enhance_night_vision(frame)
             
-            # Detección
-            detections = self.detector.detect(frame)
-            self.last_detections_count = len(detections)
+            # DETECCIÓN - CRÍTICO
+            detections = []
+            if self.detector:
+                try:
+                    detections = self.detector.detect(frame)
+                    self.last_detections_count = len(detections)
+                    logger.debug(f"🔍 Detecciones: {len(detections)}")
+                except Exception as e:
+                    logger.error(f"❌ Error en detección: {e}")
+                    self.last_detections_count = 0
             
-            # Tracking
-            tracks = self.tracker.update(detections)
-            self.current_tracks = tracks
+            # TRACKING - CRÍTICO
+            tracks = []
+            if self.tracker and detections:
+                try:
+                    tracks = self.tracker.update(detections)
+                    self.current_tracks = tracks
+                    logger.debug(f"📍 Tracks activos: {len(tracks)}")
+                except Exception as e:
+                    logger.error(f"❌ Error en tracking: {e}")
+                    self.current_tracks = []
             
-            # Análisis de tráfico
-            analysis_results = self.analyzer.analyze_frame(tracks, frame.shape)
+            # ANÁLISIS DE TRÁFICO - CRÍTICO
+            if self.analyzer and tracks:
+                try:
+                    analysis_results = self.analyzer.analyze_frame(tracks, frame.shape)
+                    
+                    # Procesar resultados de forma asíncrona
+                    if analysis_results:
+                        if self.loop is not None:
+                            asyncio.run_coroutine_threadsafe(
+                                self._process_analysis_results(analysis_results, tracks),
+                                self.loop
+                            )
+                        else:
+                            logger.error("❌ No hay event loop disponible para análisis")
+                except Exception as e:
+                    logger.error(f"❌ Error en análisis: {e}")
             
-            # Procesar resultados de forma asíncrona
-            asyncio.create_task(self._process_analysis_results(analysis_results, tracks))
+            # DIBUJAR OVERLAY CON DETECCIONES Y TRACKING
+            frame = self._draw_detection_overlay(frame, detections, tracks)
             
-            # Dibujar overlay si está habilitado
-            if self.system_config.get('show_overlay', True):
-                frame = self.analyzer.draw_analysis_overlay(frame, tracks)
+            # Dibujar overlay de análisis si está habilitado
+            if self.system_config.get('show_overlay', True) and self.analyzer:
+                try:
+                    frame = self.analyzer.draw_analysis_overlay(frame, tracks)
+                except Exception as e:
+                    logger.error(f"❌ Error dibujando overlay de análisis: {e}")
             
             # Guardar tiempo de procesamiento
             self.last_processing_time = time.time() - start_time
@@ -432,12 +517,91 @@ class VideoProcessor:
         except Exception as e:
             logger.error(f"❌ Error procesando frame: {e}")
             return frame
+    
+    def _draw_detection_overlay(self, frame: np.ndarray, detections: List, tracks: List) -> np.ndarray:
+        """Dibujar overlay de detecciones y tracking"""
+        try:
+            # Dibujar detecciones (bounding boxes)
+            for detection in detections:
+                bbox = detection['bbox']
+                confidence = detection['confidence']
+                class_name = detection['class_name']
+                
+                x, y, w, h = bbox
+                
+                # Color según clase
+                colors = {
+                    'car': (0, 255, 0),      # Verde
+                    'truck': (0, 0, 255),    # Rojo  
+                    'bus': (255, 0, 0),      # Azul
+                    'motorcycle': (0, 255, 255)  # Amarillo
+                }
+                color = colors.get(class_name, (255, 255, 255))
+                
+                # Dibujar bounding box
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                
+                # Etiqueta
+                label = f"{class_name} {confidence:.2f}"
+                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                
+                # Fondo para etiqueta
+                cv2.rectangle(frame, (x, y - label_size[1] - 10), 
+                             (x + label_size[0], y), color, -1)
+                
+                # Texto
+                cv2.putText(frame, label, (x, y - 5), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+            
+            # Dibujar tracks (IDs y trayectorias)
+            for track in tracks:
+                center = track.center
+                track_id = track.track_id
+                
+                # Punto central
+                cv2.circle(frame, (int(center[0]), int(center[1])), 5, (255, 0, 255), -1)
+                
+                # ID del track
+                cv2.putText(frame, f"ID:{track_id}", 
+                           (int(center[0]) + 10, int(center[1]) - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                
+                # Trayectoria (últimas 10 posiciones)
+                if len(track.history) > 1:
+                    points = []
+                    for hist_bbox in track.history[-10:]:
+                        hist_center = (hist_bbox[0] + hist_bbox[2]//2, 
+                                     hist_bbox[1] + hist_bbox[3]//2)
+                        points.append(hist_center)
+                    
+                    # Dibujar línea de trayectoria
+                    for i in range(1, len(points)):
+                        cv2.line(frame, points[i-1], points[i], (255, 0, 255), 2)
+            
+            # Información del sistema
+            info_y = 30
+            cv2.putText(frame, f"Detecciones: {len(detections)}", (10, info_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            cv2.putText(frame, f"Tracks: {len(tracks)}", (10, info_y + 25),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # FPS
+            if hasattr(self, 'current_fps'):
+                cv2.putText(frame, f"FPS: {self.current_fps}", (10, info_y + 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            return frame
+            
+        except Exception as e:
+            logger.error(f"❌ Error dibujando overlay: {e}")
+            return frame
 
     async def _process_analysis_results(self, results: Dict, tracks: List):
         """Procesar resultados del análisis"""
         try:
             # Procesar cruces de líneas
-            for crossing in results['line_crossings']:
+            for crossing in results.get('line_crossings', []):
                 # Encontrar track correspondiente
                 track = next((t for t in tracks if t.track_id == crossing['vehicle_id']), None)
                 if track:
@@ -474,20 +638,24 @@ class VideoProcessor:
                         'metadata': {
                             'center': crossing['center'],
                             'timestamp': crossing['timestamp'],
-                            'model_type': self.detector.model_type if self.detector else 'unknown'
+                            'model_type': getattr(self.detector, 'model_type', 'unknown')
                         }
                     }
                     
-                    await self.db_manager.insert_vehicle_crossing(crossing_data)
+                    if self.db_manager:
+                        await self.db_manager.insert_vehicle_crossing(crossing_data)
             
             # Enviar analítico si es necesario
-            if results['send_analytic'] and self.callback_func is not None:
+            if results.get('send_analytic') and self.callback_func is not None:
                 analytic_data = {
                     'fase': self.camera_config.get('fase', 'fase1'),
-                    'puntos': len(results['vehicles_in_red_zone']),
+                    'puntos': len(results.get('vehicles_in_red_zone', [])),
                     'vehiculos': True
                 }
-                await self.callback_func('send_analytic', analytic_data)
+                try:
+                    await self.callback_func('send_analytic', analytic_data)
+                except Exception as e:
+                    logger.error(f"❌ Error en callback: {e}")
         
         except Exception as e:
             logger.error(f"❌ Error procesando resultados: {e}")
@@ -517,5 +685,7 @@ class VideoProcessor:
             'last_successful_frame': self.last_successful_frame,
             'processing_time_ms': getattr(self, 'last_processing_time', 0) * 1000,
             'rtsp_url_configured': bool(self.camera_config.get('rtsp_url')),
-            'model_info': self.detector.get_model_info() if self.detector else {}
+            'detector_available': self.detector is not None,
+            'tracker_available': self.tracker is not None,
+            'analyzer_available': self.analyzer is not None
         }

@@ -31,6 +31,13 @@ RUN apt-get update && apt-get install -y \
     libtiff5-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# RKNN: Crear directorio y descargar librknnrt.so para RK3588
+RUN mkdir -p /usr/lib && \
+    wget -q https://github.com/airockchip/rknn-toolkit2/raw/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so \
+    -O /usr/lib/librknnrt.so && \
+    chmod +x /usr/lib/librknnrt.so && \
+    ldconfig
+
 # Copiar archivos de la aplicación
 COPY . .
 
@@ -43,34 +50,26 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Instalar Ultralytics ACTUALIZADO con soporte RKNN
 RUN pip install --no-cache-dir "ultralytics>=8.3.0"
 
-# Instalar OpenCV optimizado para ARM64 si es posible
+# Instalar OpenCV optimizado para ARM64
 RUN pip install --no-cache-dir opencv-python-headless==4.8.1.78
 
-# Para Radxa Rock 5T/RK3588: instalar librerías RKNN
-RUN apt-get update && apt-get install -y \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
-
-# Descargar e instalar las librerías RKNN para RK3588 (si están disponibles)
-RUN cd /tmp && \
-    (wget -q https://github.com/airockchip/rknn-toolkit2/raw/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so && \
-     cp librknnrt.so /usr/lib/ && \
-     ldconfig ) 
-
-# Instalar RKNN Toolkit Lite2 (para dispositivos ARM64)
-RUN pip install --no-cache-dir rknn-toolkit-lite2==2.3.2 || \
-    pip install --no-cache-dir rknn-toolkit2 
+# Instalar RKNN Toolkit Lite2 para RK3588
+RUN pip install --no-cache-dir rknn-toolkit-lite2==2.3.2
 
 # Crear directorios necesarios
 RUN mkdir -p /app/models /app/data /app/config /app/logs
 
-# Copiar script de conversión de modelo
-#COPY scripts/convert_yolo11_rknn.py /app/scripts/
+# Descargar modelo YOLO11n base si no existe
+RUN cd /app/models && \
+    if [ ! -f "yolo11n.pt" ]; then \
+        wget -q https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt; \
+    fi
 
 # Variables de entorno
 ENV PYTHONPATH="/app:$PYTHONPATH"
 ENV USE_RKNN=1
 ENV OPENCV_LOG_LEVEL=ERROR
+ENV LD_LIBRARY_PATH="/usr/lib:$LD_LIBRARY_PATH"
 
 # Puerto de la aplicación
 EXPOSE 8000

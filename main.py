@@ -273,7 +273,10 @@ async def restart_video_processor():
                     db_manager=db_manager,
                     callback_func=None
                 )
-                
+
+                # ⚠️ PASAMOS EL EVENT LOOP PARA FUNCIONAMIENTO DE async desde hilos
+                video_processor.set_event_loop(asyncio.get_event_loop())
+
                 await video_processor.initialize()
                 video_processor.start_processing()
                 
@@ -387,20 +390,37 @@ app = FastAPI(lifespan=lifespan)
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Permitir desde cualquier origen
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Seguridad
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)  # No error automático
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if not auth_service or not auth_service.verify_token(credentials.credentials):
-        raise HTTPException(status_code=401, detail="Token inválido")
-    return credentials.credentials
-
+    """Verificar token con manejo de errores mejorado"""
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Token requerido")
+    
+    try:
+        if not auth_service:
+            # Modo desarrollo - aceptar cualquier token no vacío
+            if credentials.credentials and len(credentials.credentials) > 10:
+                return credentials.credentials
+            raise HTTPException(status_code=401, detail="Token inválido")
+        
+        if not auth_service.verify_token(credentials.credentials):
+            raise HTTPException(status_code=401, detail="Token inválido o expirado")
+        
+        return credentials.credentials
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verificando token: {e}")
+        raise HTTPException(status_code=401, detail="Error de autenticación")
 # ============================================================================
 # RUTAS DE API CORREGIDAS
 # ============================================================================
