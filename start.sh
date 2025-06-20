@@ -16,6 +16,25 @@ else
     echo "⚠️  Hardware no reconocido como Radxa - usando CPU/OpenCV"
     export USE_RKNN=0
 fi
+echo "🔧 Verificando NPU RK3588..."
+
+# Verificar driver NPU
+if dmesg | grep -q "rknpu"; then
+    echo "✅ Driver NPU encontrado"
+else
+    echo "⚠️ Driver NPU no encontrado"
+fi
+
+# Verificar librknnrt.so
+if [ -f "/usr/lib/librknnrt.so" ] || [ -f "/usr/lib/aarch64-linux-gnu/librknnrt.so" ]; then
+    echo "✅ librknnrt.so encontrada"
+else
+    echo "❌ librknnrt.so no encontrada"
+fi
+
+# ✅ CONFIGURAR VARIABLES ESPECÍFICAS RKNN
+export RKNN_TARGET_PLATFORM=rk3588
+export NPU_ENABLED=1
 
 # Crear directorios necesarios
 mkdir -p /app/data /app/config /app/models /app/logs

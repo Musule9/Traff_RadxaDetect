@@ -448,7 +448,7 @@ async def logout(token: str = Depends(verify_token)):
 # Health check
 @app.get("/api/camera_health")
 async def health():
-    """Health check completo"""
+    """Health check completo - CON INFO DE RESOLUCIÓN"""
     camera_config = load_camera_config()
     video_status = get_video_processor_status()
     
@@ -461,6 +461,15 @@ async def health():
     except:
         pass
     
+    # Verificar modelo RKNN
+    rknn_model_available = False
+    try:
+        import glob
+        rknn_files = glob.glob("/app/models/*.rknn")
+        rknn_model_available = len(rknn_files) > 0
+    except:
+        pass
+    
     return {
         "status": "healthy" if video_status["running"] else "warning",
         "timestamp": datetime.now().isoformat(),
@@ -469,16 +478,48 @@ async def health():
         "camera_configured": bool(camera_config.get("rtsp_url")),
         "hardware": hardware_info,
         "modules_available": MODULES_AVAILABLE,
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "resolution": "640x640",  # ✅ SIEMPRE 640x640
+        "rknn_model_available": rknn_model_available,
+        "target_platform": "rk3588",
+        "processing_resolution": "640x640",
+        "forced_resolution": True
     }
 
 # CONFIGURACIÓN DE CÁMARA - CORREGIDA
-@app.get("/api/camera/config")
-async def get_camera_config_api():
-    """Obtener configuración de cámara"""
-    config = load_camera_config()
-    logger.info(f"📤 Enviando configuración: RTSP={bool(config.get('rtsp_url'))}")
-    return config
+@app.post("/api/camera/config")
+async def update_camera_config_api(config: CameraConfig):
+    """Actualizar configuración de cámara - FORZANDO 640x640"""
+    try:
+        logger.info(f"📥 Recibiendo configuración: RTSP={bool(config.rtsp_url)}")
+        
+        # Convertir a dict
+        config_dict = config.dict()
+        
+        # ✅ FORZAR RESOLUCIÓN Y FPS INDEPENDIENTEMENTE DE LO QUE ENVÍE EL FRONTEND
+        config_dict["resolution"] = "640x640"
+        config_dict["frame_rate"] = "30"
+        
+        logger.info("📐 Configuración forzada a 640x640 @ 30fps")
+        
+        if not save_camera_config(config_dict):
+            raise HTTPException(status_code=500, detail="Error guardando configuración")
+        
+        # Reiniciar video processor
+        processor_started = await restart_video_processor()
+        
+        return {
+            "message": "Configuración guardada exitosamente",
+            "config_saved": True,
+            "video_processor_started": processor_started,
+            "rtsp_configured": bool(config.rtsp_url),
+            "resolution_forced": "640x640",  # ✅ INFORMAR AL FRONTEND
+            "fps_forced": "30"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error actualizando configuración: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/camera/config")
 async def update_camera_config_api(config: CameraConfig):
@@ -555,7 +596,7 @@ async def reset_camera_config_api():
 # ESTADO DE CÁMARA
 @app.get("/api/camera/status")
 async def get_camera_status_api():
-    """Obtener estado de cámara"""
+    """Obtener estado de cámara - CON INFORMACIÓN DE RESOLUCIÓN"""
     config = load_camera_config()
     video_status = get_video_processor_status()
     
@@ -567,7 +608,10 @@ async def get_camera_status_api():
         "direccion": config.get("direccion", "norte"),
         "enabled": config.get("enabled", False),
         "error": video_status.get("error"),
-        "last_check": datetime.now().isoformat()
+        "last_check": datetime.now().isoformat(),
+        "resolution": "640x640",  # ✅ SIEMPRE 640x640
+        "frame_rate": "30",
+        "processing_resolution": "640x640"
     }
 
 # REINICIAR CÁMARA
@@ -604,9 +648,10 @@ async def restart_camera_api():
         raise HTTPException(status_code=500, detail=str(e))
 
 # TEST DE CONEXIÓN
+
 @app.post("/api/camera/test")
 async def test_camera_stream_api(request: Request):
-    """Probar conexión RTSP - CORREGIDO"""
+    """Probar conexión RTSP - CON VERIFICACIÓN 640x640"""
     try:
         data = await request.json()
         rtsp_url = data.get("rtsp_url", "")
@@ -614,10 +659,14 @@ async def test_camera_stream_api(request: Request):
         if not rtsp_url:
             raise HTTPException(status_code=400, detail="URL RTSP requerida")
         
-        logger.info(f"🧪 Probando conexión RTSP: {rtsp_url}")
+        logger.info(f"🧪 Probando conexión RTSP (640x640): {rtsp_url}")
         
-        # Test básico con OpenCV - SIN CAP_PROP_TIMEOUT
+        # Test con OpenCV forzando resolución
         cap = cv2.VideoCapture(rtsp_url)
+        
+        # ✅ CONFIGURAR A 640x640 PARA TEST
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 640)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
         if not cap.isOpened():
@@ -627,33 +676,49 @@ async def test_camera_stream_api(request: Request):
                 "message": "No se pudo conectar al stream RTSP. Verifique URL, credenciales y conectividad."
             }
         
-        # Intentar leer algunos frames con timeout manual
+        # Intentar leer frames y verificar resolución
         frames_read = 0
+        frames_correct_size = 0
         max_attempts = 10
         
         for i in range(max_attempts):
             ret, frame = cap.read()
             if ret and frame is not None:
                 frames_read += 1
-                if frames_read >= 3:  # Si leemos 3 frames exitosos, es suficiente
+                
+                # Verificar resolución
+                h, w = frame.shape[:2]
+                if w == 640 and h == 640:
+                    frames_correct_size += 1
+                elif i == 0:  # Log solo en el primer frame
+                    logger.info(f"📐 Frame original del test: {w}x{h} (se redimensionará a 640x640)")
+                
+                if frames_read >= 5:  # Suficientes frames exitosos
                     break
             else:
-                # Esperar un poco entre intentos
                 import time
                 time.sleep(0.1)
         
         cap.release()
         
         if frames_read >= 3:
+            message = f"Conexión exitosa. Se leyeron {frames_read} frames."
+            if frames_correct_size > 0:
+                message += f" {frames_correct_size} frames ya en 640x640."
+            else:
+                message += " Frames se redimensionarán automáticamente a 640x640."
+            
             return {
                 "success": True,
-                "message": f"Conexión exitosa. Se leyeron {frames_read} frames.",
-                "frames_tested": frames_read
+                "message": message,
+                "frames_tested": frames_read,
+                "resolution_info": f"Configurado para 640x640",
+                "frames_correct_size": frames_correct_size
             }
         elif frames_read > 0:
             return {
                 "success": True,
-                "message": f"Conexión inestable pero funcional. Se leyeron {frames_read} frames de {max_attempts} intentos.",
+                "message": f"Conexión inestable pero funcional. Se leyeron {frames_read} frames de {max_attempts} intentos. Resolución forzada a 640x640.",
                 "frames_tested": frames_read
             }
         else:
@@ -672,7 +737,7 @@ async def test_camera_stream_api(request: Request):
 # STREAM DE VIDEO - CORREGIDO
 @app.get("/api/camera/stream")
 async def get_camera_stream_api():
-    """Stream de video HTTP"""
+    """Stream de video HTTP - FORZADO A 640x640"""
     def generate_frames():
         frame_count = 0
         last_frame_time = time.time()
@@ -681,7 +746,7 @@ async def get_camera_stream_api():
             try:
                 current_time = time.time()
                 
-                # Control de FPS para web (15 FPS máximo)
+                # Control de FPS para web (15 FPS máximo para reducir ancho de banda)
                 if current_time - last_frame_time < 1/15:
                     time.sleep(0.01)
                     continue
@@ -689,19 +754,26 @@ async def get_camera_stream_api():
                 if video_processor and hasattr(video_processor, 'get_latest_frame'):
                     frame = video_processor.get_latest_frame()
                     if frame is not None:
-                        # Redimensionar para web
+                        # ✅ VERIFICAR QUE EL FRAME SEA EXACTAMENTE 640x640
                         height, width = frame.shape[:2]
-                        if width > 1280:
-                            scale = 1280 / width
-                            new_width = 1280
-                            new_height = int(height * scale)
-                            frame = cv2.resize(frame, (new_width, new_height))
+                        if width != 640 or height != 640:
+                            frame = cv2.resize(frame, (640, 640))
+                            logger.debug(f"🔄 Frame web redimensionado: {width}x{height} → 640x640")
                         
-                        # Comprimir
-                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        # ✅ COMPRIMIR PARA WEB (CALIDAD ALTA PARA 640x640)
+                        ret, buffer = cv2.imencode('.jpg', frame, [
+                            cv2.IMWRITE_JPEG_QUALITY, 90,  # Calidad alta
+                            cv2.IMWRITE_JPEG_OPTIMIZE, 1   # Optimizar
+                        ])
+                        
                         if ret:
                             frame_count += 1
                             last_frame_time = current_time
+                            
+                            # Log cada 100 frames
+                            if frame_count % 100 == 0:
+                                logger.debug(f"📺 Stream web: frame {frame_count}, tamaño: {len(buffer)} bytes")
+                            
                             yield (b'--frame\r\n'
                                    b'Content-Type: image/jpeg\r\n'
                                    b'Content-Length: ' + str(len(buffer)).encode() + b'\r\n\r\n' + 
@@ -709,12 +781,12 @@ async def get_camera_stream_api():
                             continue
                 
                 # Frame placeholder si no hay video
-                yield _generate_placeholder_frame()
+                yield _generate_placeholder_frame_640()
                 last_frame_time = current_time
                 
             except Exception as e:
                 logger.error(f"❌ Error en streaming: {e}")
-                yield _generate_error_frame()
+                yield _generate_error_frame_640()
                 time.sleep(1)
     
     return StreamingResponse(
@@ -728,22 +800,24 @@ async def get_camera_stream_api():
         }
     )
 
-def _generate_placeholder_frame():
-    """Frame placeholder"""
-    placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+def _generate_placeholder_frame_640():
+    """Frame placeholder - EXACTAMENTE 640x640"""
+    placeholder = np.zeros((640, 640, 3), dtype=np.uint8)
     
     # Fondo degradado
-    for i in range(480):
-        placeholder[i, :] = [20 + (i//15), 25 + (i//15), 35 + (i//15)]
+    for i in range(640):
+        placeholder[i, :] = [20 + (i//20), 25 + (i//20), 35 + (i//20)]
     
-    # Texto
-    cv2.putText(placeholder, "SISTEMA DE DETECCION VEHICULAR", (80, 200), 
+    # Texto centrado para 640x640
+    cv2.putText(placeholder, "SISTEMA DE DETECCION VEHICULAR", (80, 280), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    cv2.putText(placeholder, "Radxa Rock 5T", (230, 240), 
+    cv2.putText(placeholder, "Radxa Rock 5T - RKNN", (180, 320), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 150, 255), 2)
-    cv2.putText(placeholder, "Configure la camara para comenzar", (130, 280), 
+    cv2.putText(placeholder, "Resolucion: 640x640", (200, 360), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(placeholder, f"FPS: 0 | Estado: Esperando configuracion", (160, 320),
+    cv2.putText(placeholder, "Configure la camara para comenzar", (130, 400), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    cv2.putText(placeholder, f"FPS: 0 | Estado: Esperando configuracion", (160, 440),
                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
     
     ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -754,17 +828,19 @@ def _generate_placeholder_frame():
                 buffer.tobytes() + b'\r\n')
     return b''
 
-def _generate_error_frame():
-    """Frame de error"""
-    error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+def _generate_error_frame_640():
+    """Frame de error - EXACTAMENTE 640x640"""
+    error_frame = np.zeros((640, 640, 3), dtype=np.uint8)
     error_frame[:] = [40, 20, 20]
     
-    cv2.putText(error_frame, "ERROR DE CONEXION", (180, 220), 
+    cv2.putText(error_frame, "ERROR DE CONEXION", (180, 300), 
                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    cv2.putText(error_frame, "Verificar configuracion RTSP", (150, 260), 
+    cv2.putText(error_frame, "Verificar configuracion RTSP", (150, 340), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(error_frame, "URL, credenciales y conectividad", (140, 300),
+    cv2.putText(error_frame, "URL, credenciales y conectividad", (140, 380),
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    cv2.putText(error_frame, "Resolucion: 640x640", (200, 420),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
     
     ret, buffer = cv2.imencode('.jpg', error_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
     if ret:
@@ -780,25 +856,43 @@ def _generate_error_frame():
 def get_system_config_file_path():
     return "/app/config/system_config.json"
 
-def load_system_config() -> Dict:
-    """Cargar configuración del sistema"""
-    config_file = get_system_config_file_path()
+
+def load_camera_config() -> Dict:
+    """Cargar configuración de cámara - CON RESOLUCIÓN FORZADA 640x640"""
+    config_file = get_config_file_path()
     try:
         if os.path.exists(config_file):
             with open(config_file, "r") as f:
-                return json.load(f)
+                config = json.load(f)
+                
+                # ✅ FORZAR RESOLUCIÓN A 640x640 SIEMPRE
+                config["resolution"] = "640x640"
+                config["frame_rate"] = "30"
+                
+                logger.info(f"📄 Configuración cargada: RTSP={bool(config.get('rtsp_url'))}, Resolución: 640x640")
+                return config
     except Exception as e:
-        logger.error(f"Error cargando config sistema: {e}")
+        logger.error(f"Error cargando configuración: {e}")
     
-    # Configuración por defecto
-    return {
-        "confidence_threshold": 0.5,
-        "night_vision_enhancement": True,
-        "show_overlay": True,
-        "data_retention_days": 30,
-        "target_fps": 30,
-        "log_level": "INFO"
+    # Configuración por defecto - SIEMPRE 640x640
+    default_config = {
+        "rtsp_url": "",
+        "fase": "fase1",
+        "direccion": "norte",
+        "controladora_id": "CTRL_001",
+        "controladora_ip": "192.168.1.200",
+        "camera_name": "",
+        "camera_location": "",
+        "camera_ip": "",
+        "username": "admin",
+        "password": "",
+        "port": "554",
+        "stream_path": "/stream1",
+        "resolution": "640x640",  # ✅ FORZADO
+        "frame_rate": "30",       # ✅ FORZADO
+        "enabled": False
     }
+    return default_config
 
 def save_system_config(config: Dict) -> bool:
     """Guardar configuración del sistema"""
@@ -1016,6 +1110,45 @@ else:
             "health": "/api/camera_health"
         }
 
+def verify_npu_support():
+    """Verificar soporte NPU en RK3588"""
+    try:
+        import subprocess
+        
+        # Verificar hardware
+        if os.path.exists("/proc/device-tree/model"):
+            with open("/proc/device-tree/model", "rb") as f:
+                model = f.read().decode('utf-8', errors='ignore').strip('\x00')
+                if "RK3588" in model or "Radxa" in model:
+                    logger.info(f"✅ Hardware soportado: {model}")
+                else:
+                    logger.warning(f"⚠️ Hardware no reconocido: {model}")
+        
+        # Verificar driver NPU
+        result = subprocess.run(
+            ["dmesg"], 
+            capture_output=True, text=True
+        )
+        if "rknpu" in result.stdout:
+            npu_lines = [line for line in result.stdout.split('\n') if 'rknpu' in line]
+            logger.info(f"✅ Driver NPU encontrado: {len(npu_lines)} líneas")
+        else:
+            logger.warning("⚠️ Driver NPU no encontrado en dmesg")
+        
+        # Verificar RKNN
+        try:
+            from rknnlite.api import RKNNLite
+            rknn = RKNNLite()
+            rknn.release()
+            logger.info("✅ RKNN disponible")
+        except Exception as e:
+            logger.warning(f"⚠️ RKNN no disponible: {e}")
+        
+        return True
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Verificación NPU: {e}")
+        return False
 # ============================================================================
 # INICIO DEL SERVIDOR
 # ============================================================================
@@ -1024,7 +1157,7 @@ if __name__ == "__main__":
     print(f"🌐 Server: http://0.0.0.0:8000")
     print(f"📚 API Docs: http://0.0.0.0:8000/docs")
     print(f"🎯 Frontend: {'Available' if HAS_FRONTEND else 'Not available'}")
-    
+    verify_npu_support()
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

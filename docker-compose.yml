@@ -19,13 +19,16 @@ services:
       - /usr/lib/librknnrt.so:/usr/lib/librknnrt.so:ro
     devices:
       - /dev/dri:/dev/dri
-      - /dev/mali0:/dev/mali0
+      - /dev/mali0:/dev/mali0  
       - /dev/dma_heap:/dev/dma_heap
       - /dev/rga:/dev/rga
       - /dev/mpp_service:/dev/mpp_service
+      - /dev/dma_heap:/dev/dma_heap
+      - /sys/class/devfreq:/sys/class/devfreq:ro
     environment:
       - USE_RKNN=1
+      - RKNN_TARGET_PLATFORM=rk3588  
+      - NPU_ENABLED=1                
       - PYTHONPATH=/app
       - LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/usr/lib
-      - OPENCV_LOG_LEVEL=ERROR
     network_mode: "host" 

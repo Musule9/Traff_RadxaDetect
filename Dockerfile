@@ -32,11 +32,18 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # RKNN: Crear directorio y descargar librknnrt.so para RK3588
-RUN mkdir -p /usr/lib && \
-    wget -q https://github.com/airockchip/rknn-toolkit2/raw/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so \
-    -O /usr/lib/librknnrt.so && \
-    chmod +x /usr/lib/librknnrt.so && \
-    ldconfig
+RUN if [ -f /proc/device-tree/model ]; then \
+        MODEL=$(cat /proc/device-tree/model 2>/dev/null || echo "Unknown"); \
+        if [[ "$MODEL" == *"Radxa"* ]] || [[ "$MODEL" == *"ROCK"* ]]; then \
+            echo "✅ Radxa Rock detectada - configurando NPU"; \
+            # Verificar librknnrt.so
+            if [ ! -f "/usr/lib/librknnrt.so" ]; then \
+                wget -q https://github.com/airockchip/rknn-toolkit2/raw/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so \
+                -O /usr/lib/librknnrt.so; \
+                chmod +x /usr/lib/librknnrt.so; \
+            fi; \
+        fi; \
+    fi
 
 # Copiar archivos de la aplicación
 COPY . .
@@ -69,8 +76,14 @@ RUN cd /app/models && \
 ENV PYTHONPATH="/app:$PYTHONPATH"
 ENV USE_RKNN=1
 ENV OPENCV_LOG_LEVEL=ERROR
+ENV OPENCV_DNN_BACKEND=DEFAULT
 ENV LD_LIBRARY_PATH="/usr/lib:$LD_LIBRARY_PATH"
-
+ENV RKNN_TARGET_PLATFORM=rk3588
+ENV RKNN_QUANTIZE=i8
+ENV NPU_ENABLED=1
+ENV PROCESSING_WIDTH=640
+ENV PROCESSING_HEIGHT=640
+ENV FORCE_RESOLUTION=640x640
 # Puerto de la aplicación
 EXPOSE 8000
 

@@ -16,7 +16,7 @@ from .analyzer import TrafficAnalyzer
 from .database import DatabaseManager
 
 class VideoProcessor:
-    """Procesador principal de video con RTSP - TOTALMENTE CORREGIDO"""
+    """Procesador principal de video con RTSP - FORZANDO 640x640 EN TODA LA PIPELINE"""
     
     def __init__(self, 
                  camera_config: Dict,
@@ -28,6 +28,11 @@ class VideoProcessor:
         self.system_config = system_config
         self.db_manager = db_manager
         self.callback_func = callback_func
+        
+        # ✅ FORZAR RESOLUCIÓN 640x640 EN TODA LA PIPELINE
+        self.TARGET_WIDTH = 640
+        self.TARGET_HEIGHT = 640
+        self.PROCESSING_SIZE = (self.TARGET_WIDTH, self.TARGET_HEIGHT)
         
         # Componentes principales
         self.detector = None
@@ -44,7 +49,7 @@ class VideoProcessor:
         self.fps_time = time.time()
         self.current_fps = 0
         
-        # Frame sharing para web
+        # Frame sharing para web - ✅ SIEMPRE 640x640
         self.latest_frame = None
         self.latest_raw_frame = None
         self.frame_lock = threading.Lock()
@@ -61,29 +66,25 @@ class VideoProcessor:
         self.loop = None
 
     async def initialize(self):
-        """Inicializar todos los componentes - COMPLETAMENTE CORREGIDO"""
+        """Inicializar todos los componentes - CON FORZADO 640x640"""
         try:
-            logger.info("🔄 Inicializando VideoProcessor...")
+            logger.info("🔄 Inicializando VideoProcessor con resolución forzada 640x640...")
             
-            # 1. Inicializar detector con YOLO11n
+            # 1. Inicializar detector con resolución forzada
             try:
                 model_path = self.system_config.get('model_path')
                 confidence = self.system_config.get('confidence_threshold', 0.5)
                 
-                logger.info(f"🤖 Inicializando detector con confianza: {confidence}")
+                logger.info(f"🤖 Inicializando detector (640x640) con confianza: {confidence}")
                 self.detector = VehicleDetector(model_path, confidence)
                 
-                # Verificar que el detector se inicializó correctamente
                 if self.detector is None:
                     raise Exception("Detector no se pudo inicializar")
                 
-                # Log información del modelo - SIN ACCEDER A ATRIBUTOS INEXISTENTES
-                try:
-                    model_info = self.detector.get_model_info()
-                    logger.info(f"🤖 Detector: {model_info.get('model_type', 'unknown')} | RKNN: {model_info.get('use_rknn', False)}")
-                except Exception as e:
-                    logger.warning(f"⚠️ No se pudo obtener info del modelo: {e}")
-                    logger.info(f"🤖 Detector inicializado con tipo: {getattr(self.detector, 'model_type', 'unknown')}")
+                # ✅ VERIFICAR QUE EL DETECTOR USE 640x640
+                detector_info = self.detector.get_model_info()
+                logger.info(f"🤖 Detector: {detector_info.get('model_type', 'unknown')} | RKNN: {detector_info.get('use_rknn', False)}")
+                logger.info(f"📐 Input size configurado: {detector_info.get('input_size', 'unknown')}")
                 
             except Exception as e:
                 logger.error(f"❌ Error inicializando detector: {e}")
@@ -129,7 +130,7 @@ class VideoProcessor:
             except Exception as e:
                 logger.warning(f"⚠️ Error inicializando base de datos: {e}")
             
-            logger.info("✅ VideoProcessor inicializado correctamente")
+            logger.info("✅ VideoProcessor inicializado correctamente con pipeline 640x640")
             
         except Exception as e:
             logger.error(f"❌ Error inicializando VideoProcessor: {e}")
@@ -143,7 +144,6 @@ class VideoProcessor:
         try:
             os.makedirs("/app/config", exist_ok=True)
             
-            # Asegurar que el archivo existe
             analysis_file = "/app/config/analysis.json"
             if not os.path.exists(analysis_file):
                 logger.info("📝 Creando archivo de análisis por defecto")
@@ -152,7 +152,6 @@ class VideoProcessor:
                     json.dump(default_analysis, f, indent=2)
                 return
             
-            # Cargar configuración de líneas y zonas
             with open(analysis_file, "r") as f:
                 analysis_config = json.load(f)
             
@@ -214,7 +213,7 @@ class VideoProcessor:
         self.processing_thread.daemon = True
         self.processing_thread.start()
         
-        logger.info("✅ Procesamiento de video iniciado")
+        logger.info("✅ Procesamiento de video iniciado con resolución 640x640")
     
     def stop_processing(self):
         """Detener procesamiento de video"""
@@ -232,14 +231,14 @@ class VideoProcessor:
         logger.info("⏹️ Procesamiento de video detenido")
     
     def get_raw_frame(self) -> Optional[np.ndarray]:
-        """Obtener frame original sin overlay de análisis"""
+        """Obtener frame original - SIEMPRE 640x640"""
         with self.frame_lock:
             if hasattr(self, 'latest_raw_frame') and self.latest_raw_frame is not None:
                 return self.latest_raw_frame.copy()
             return None
 
     def get_latest_frame(self) -> Optional[np.ndarray]:
-        """Obtener último frame procesado con análisis"""
+        """Obtener último frame procesado con análisis - SIEMPRE 640x640"""
         with self.frame_lock:
             return self.latest_frame.copy() if self.latest_frame is not None else None
 
@@ -247,11 +246,12 @@ class VideoProcessor:
         """Obtener información del frame actual"""
         return {
             'fps': self.current_fps,
-            'resolution': f"{self.latest_frame.shape[1]}x{self.latest_frame.shape[0]}" if self.latest_frame is not None else "0x0",
+            'resolution': f"{self.TARGET_WIDTH}x{self.TARGET_HEIGHT}",  # ✅ SIEMPRE 640x640
             'processing_time': getattr(self, 'last_processing_time', 0),
             'tracks_count': len(getattr(self, 'current_tracks', [])),
             'detections_count': getattr(self, 'last_detections_count', 0),
-            'connection_retries': self.connection_retry_count
+            'connection_retries': self.connection_retry_count,
+            'input_size': self.PROCESSING_SIZE
         }
 
     def _validate_rtsp_url(self, rtsp_url: str) -> tuple[bool, str]:
@@ -259,27 +259,23 @@ class VideoProcessor:
         if not rtsp_url or not rtsp_url.strip():
             return False, "URL RTSP vacía"
         
-        # Verificar formato básico
         if not rtsp_url.startswith('rtsp://'):
             return False, "URL debe empezar con rtsp://"
         
-        # Verificar IP inválida (problema común)
         if '0.0.0.0' in rtsp_url:
             return False, "IP 0.0.0.0 no es válida. Configure la IP real de la cámara."
         
-        # Verificar formato básico de IP
         ip_pattern = r'rtsp://[^@]*@([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})'
         match = re.search(ip_pattern, rtsp_url)
         if match:
             ip = match.group(1)
-            # Verificar que no sean IPs reservadas problemáticas
             if ip.startswith('127.') or ip == '255.255.255.255':
                 return False, f"IP {ip} no es válida para cámara remota"
         
         return True, "URL válida"
 
     def _processing_loop(self):
-        """Loop principal de procesamiento - CORREGIDO"""
+        """Loop principal de procesamiento - CON RESOLUCIÓN FORZADA 640x640"""
         rtsp_url = self.camera_config.get('rtsp_url')
         
         # Validar URL RTSP
@@ -315,37 +311,38 @@ class VideoProcessor:
         self.is_running = False
 
     def _connect_to_stream(self, rtsp_url: str) -> bool:
-        """Conectar al stream RTSP con configuración optimizada"""
+        """Conectar al stream RTSP - FORZANDO RESOLUCIÓN 640x640"""
         try:
             # Cerrar conexión anterior si existe
             if self.video_capture:
                 self.video_capture.release()
                 time.sleep(1)
             
-            # Crear nueva captura con configuración optimizada
+            # Crear nueva captura
             self.video_capture = cv2.VideoCapture(rtsp_url)
             
-            # Configuración optimizada para OpenCV
+            # ✅ CONFIGURACIÓN FORZADA PARA 640x640
             try:
-                self.video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                self.video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                # Forzar resolución exacta 640x640
+                self.video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.TARGET_WIDTH)
+                self.video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.TARGET_HEIGHT)
                 self.video_capture.set(cv2.CAP_PROP_FPS, 30)
                 
-                # Intentar configurar buffer si está disponible
+                # Configurar buffer pequeño para baja latencia
                 try:
                     buffer_set = self.video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     if buffer_set:
-                        logger.info("✅ Buffer size configurado")
-                    else:
-                        logger.info("ℹ️ Buffer size no soportado por este backend")
+                        logger.info("✅ Buffer size configurado a 1")
                 except:
-                    logger.info("ℹ️ Buffer size no disponible en esta versión de OpenCV")
+                    logger.info("ℹ️ Buffer size no disponible")
                 
                 # Timeout si está disponible
                 try:
                     self.video_capture.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
                 except:
                     pass
+                    
+                logger.info(f"📐 Configurando captura a {self.TARGET_WIDTH}x{self.TARGET_HEIGHT}")
                     
             except Exception as e:
                 logger.warning(f"⚠️ Algunas configuraciones de captura no se aplicaron: {e}")
@@ -355,19 +352,28 @@ class VideoProcessor:
                 logger.error("❌ No se pudo abrir el stream RTSP")
                 return False
             
-            # Test de lectura
+            # Test de lectura con verificación de resolución
             logger.info("🧪 Probando lectura de frames...")
             test_frames = 0
             for i in range(5):
                 ret, frame = self.video_capture.read()
                 if ret and frame is not None:
                     test_frames += 1
+                    
+                    # ✅ VERIFICAR Y FORZAR RESOLUCIÓN EN EL PRIMER FRAME
+                    if i == 0:
+                        original_h, original_w = frame.shape[:2]
+                        logger.info(f"📐 Frame original: {original_w}x{original_h}")
+                        
+                        # Si no es 640x640, lo forzamos AQUÍ
+                        if original_w != self.TARGET_WIDTH or original_h != self.TARGET_HEIGHT:
+                            logger.info(f"🔄 Redimensionando de {original_w}x{original_h} a {self.TARGET_WIDTH}x{self.TARGET_HEIGHT}")
                 else:
                     time.sleep(0.2)
             
             if test_frames >= 2:
-                logger.info(f"✅ Stream RTSP conectado exitosamente ({test_frames}/5 frames)")
-                self.connection_retry_count = 0  # Reset contador en conexión exitosa
+                logger.info(f"✅ Stream RTSP conectado exitosamente ({test_frames}/5 frames) - Pipeline 640x640")
+                self.connection_retry_count = 0
                 return True
             else:
                 logger.error(f"❌ Stream inestable ({test_frames}/5 frames)")
@@ -378,15 +384,15 @@ class VideoProcessor:
             return False
 
     def _main_processing_loop(self):
-        """Loop principal de procesamiento una vez conectado"""
-        logger.info("🎬 Iniciando procesamiento de frames con análisis completo...")
+        """Loop principal de procesamiento - CON REDIMENSIONADO FORZADO"""
+        logger.info("🎬 Iniciando procesamiento de frames con análisis completo (640x640)...")
         
         # Variables para control de FPS
         target_fps = self.system_config.get('target_fps', 30)
         frame_time = 1.0 / target_fps
         last_frame_time = time.time()
         consecutive_failures = 0
-        max_failures = 30  # Máximo frames fallidos consecutivos
+        max_failures = 30
         
         while self.is_running:
             try:
@@ -405,14 +411,24 @@ class VideoProcessor:
                     consecutive_failures = 0
                     self.last_successful_frame = current_time
                     
+                    # ✅ FORZAR REDIMENSIONADO A 640x640 INMEDIATAMENTE
+                    original_h, original_w = frame.shape[:2]
+                    if original_w != self.TARGET_WIDTH or original_h != self.TARGET_HEIGHT:
+                        frame = cv2.resize(frame, self.PROCESSING_SIZE)
+                        logger.debug(f"🔄 Frame redimensionado: {original_w}x{original_h} → {self.TARGET_WIDTH}x{self.TARGET_HEIGHT}")
+                    
                     # PROCESAR FRAME CON ANÁLISIS COMPLETO
                     try:
                         processed_frame = self._process_frame_with_analysis(frame)
                         
-                        # Actualizar frame compartido para web
+                        # ✅ VERIFICAR QUE EL FRAME PROCESADO SEA 640x640
+                        if processed_frame.shape[:2] != (self.TARGET_HEIGHT, self.TARGET_WIDTH):
+                            processed_frame = cv2.resize(processed_frame, self.PROCESSING_SIZE)
+                        
+                        # Actualizar frame compartido para web - SIEMPRE 640x640
                         with self.frame_lock:
                             self.latest_frame = processed_frame
-                            self.latest_raw_frame = frame.copy()
+                            self.latest_raw_frame = frame.copy()  # También 640x640
                         
                         # Actualizar FPS
                         self._update_fps()
@@ -421,7 +437,7 @@ class VideoProcessor:
                         
                     except Exception as processing_error:
                         logger.error(f"❌ Error procesando frame: {processing_error}")
-                        # Usar frame original si falla el procesamiento
+                        # Usar frame redimensionado si falla el procesamiento
                         with self.frame_lock:
                             self.latest_frame = frame
                             self.latest_raw_frame = frame.copy()
@@ -438,7 +454,7 @@ class VideoProcessor:
                     time.sleep(0.1)
                 
                 # Verificar timeout de conexión
-                if current_time - self.last_successful_frame > 30:  # 30 segundos sin frames
+                if current_time - self.last_successful_frame > 30:
                     logger.error("❌ Timeout de conexión - sin frames por 30 segundos")
                     break
                     
@@ -452,21 +468,30 @@ class VideoProcessor:
         logger.info("🔚 Loop de procesamiento terminado")
     
     def _process_frame_with_analysis(self, frame: np.ndarray) -> np.ndarray:
-        """Procesar frame con análisis completo de IA"""
+        """Procesar frame con análisis completo de IA - FRAME YA ES 640x640"""
         start_time = time.time()
         
         try:
+            # ✅ VERIFICAR QUE EL FRAME SEA EXACTAMENTE 640x640
+            if frame.shape[:2] != (self.TARGET_HEIGHT, self.TARGET_WIDTH):
+                frame = cv2.resize(frame, self.PROCESSING_SIZE)
+                logger.debug(f"🔄 Frame forzado a 640x640 en processing")
+            
             # Mejorar imagen si es necesario (modo nocturno)
             if self.system_config.get('night_vision_enhancement', False):
                 frame = self.detector.enhance_night_vision(frame)
             
-            # DETECCIÓN - CRÍTICO
+            # DETECCIÓN - CRÍTICO CON FRAME 640x640
             detections = []
             if self.detector:
                 try:
+                    # ✅ EL DETECTOR RECIBE FRAME 640x640 EXACTO
                     detections = self.detector.detect(frame)
                     self.last_detections_count = len(detections)
-                    logger.debug(f"🔍 Detecciones: {len(detections)}")
+                    
+                    if len(detections) > 0:
+                        logger.debug(f"🔍 Detecciones (640x640): {len(detections)}")
+                    
                 except Exception as e:
                     logger.error(f"❌ Error en detección: {e}")
                     self.last_detections_count = 0
@@ -477,7 +502,10 @@ class VideoProcessor:
                 try:
                     tracks = self.tracker.update(detections)
                     self.current_tracks = tracks
-                    logger.debug(f"📍 Tracks activos: {len(tracks)}")
+                    
+                    if len(tracks) > 0:
+                        logger.debug(f"📍 Tracks activos: {len(tracks)}")
+                        
                 except Exception as e:
                     logger.error(f"❌ Error en tracking: {e}")
                     self.current_tracks = []
@@ -485,7 +513,8 @@ class VideoProcessor:
             # ANÁLISIS DE TRÁFICO - CRÍTICO
             if self.analyzer and tracks:
                 try:
-                    analysis_results = self.analyzer.analyze_frame(tracks, frame.shape)
+                    # ✅ PASAR SHAPE 640x640 AL ANALYZER
+                    analysis_results = self.analyzer.analyze_frame(tracks, (self.TARGET_HEIGHT, self.TARGET_WIDTH))
                     
                     # Procesar resultados de forma asíncrona
                     if analysis_results:
@@ -496,6 +525,7 @@ class VideoProcessor:
                             )
                         else:
                             logger.error("❌ No hay event loop disponible para análisis")
+                            
                 except Exception as e:
                     logger.error(f"❌ Error en análisis: {e}")
             
@@ -509,17 +539,29 @@ class VideoProcessor:
                 except Exception as e:
                     logger.error(f"❌ Error dibujando overlay de análisis: {e}")
             
+            # ✅ ASEGURAR QUE EL FRAME FINAL SEA 640x640
+            if frame.shape[:2] != (self.TARGET_HEIGHT, self.TARGET_WIDTH):
+                frame = cv2.resize(frame, self.PROCESSING_SIZE)
+            
             # Guardar tiempo de procesamiento
-            self.last_processing_time = time.time() - start_time
+            processing_time = time.time() - start_time
+            self.last_processing_time = processing_time
+            
+            # Log cada 30 frames para no saturar
+            if self.fps_counter % 30 == 0:
+                logger.debug(f"📊 Frame procesado: {processing_time*1000:.1f}ms | Det: {len(detections)} | Tracks: {len(tracks)}")
             
             return frame
             
         except Exception as e:
             logger.error(f"❌ Error procesando frame: {e}")
+            # Devolver frame 640x640 en caso de error
+            if frame.shape[:2] != (self.TARGET_HEIGHT, self.TARGET_WIDTH):
+                frame = cv2.resize(frame, self.PROCESSING_SIZE)
             return frame
     
     def _draw_detection_overlay(self, frame: np.ndarray, detections: List, tracks: List) -> np.ndarray:
-        """Dibujar overlay de detecciones y tracking"""
+        """Dibujar overlay de detecciones y tracking - OPTIMIZADO PARA 640x640"""
         try:
             # Dibujar detecciones (bounding boxes)
             for detection in detections:
@@ -543,15 +585,15 @@ class VideoProcessor:
                 
                 # Etiqueta
                 label = f"{class_name} {confidence:.2f}"
-                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
                 
                 # Fondo para etiqueta
-                cv2.rectangle(frame, (x, y - label_size[1] - 10), 
+                cv2.rectangle(frame, (x, y - label_size[1] - 5), 
                              (x + label_size[0], y), color, -1)
                 
                 # Texto
-                cv2.putText(frame, label, (x, y - 5), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                cv2.putText(frame, label, (x, y - 3), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
             
             # Dibujar tracks (IDs y trayectorias)
             for track in tracks:
@@ -559,37 +601,38 @@ class VideoProcessor:
                 track_id = track.track_id
                 
                 # Punto central
-                cv2.circle(frame, (int(center[0]), int(center[1])), 5, (255, 0, 255), -1)
+                cv2.circle(frame, (int(center[0]), int(center[1])), 3, (255, 0, 255), -1)
                 
                 # ID del track
                 cv2.putText(frame, f"ID:{track_id}", 
-                           (int(center[0]) + 10, int(center[1]) - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                           (int(center[0]) + 5, int(center[1]) - 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
                 
-                # Trayectoria (últimas 10 posiciones)
+                # Trayectoria (últimas 5 posiciones para no saturar)
                 if len(track.history) > 1:
                     points = []
-                    for hist_bbox in track.history[-10:]:
+                    for hist_bbox in track.history[-5:]:
                         hist_center = (hist_bbox[0] + hist_bbox[2]//2, 
                                      hist_bbox[1] + hist_bbox[3]//2)
                         points.append(hist_center)
                     
                     # Dibujar línea de trayectoria
                     for i in range(1, len(points)):
-                        cv2.line(frame, points[i-1], points[i], (255, 0, 255), 2)
+                        cv2.line(frame, points[i-1], points[i], (255, 0, 255), 1)
             
-            # Información del sistema
-            info_y = 30
-            cv2.putText(frame, f"Detecciones: {len(detections)}", (10, info_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            
-            cv2.putText(frame, f"Tracks: {len(tracks)}", (10, info_y + 25),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            # Información del sistema - AJUSTADA PARA 640x640
+            info_y = 20
+            cv2.putText(frame, f"Det: {len(detections)} | Tracks: {len(tracks)}", (5, info_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
             # FPS
             if hasattr(self, 'current_fps'):
-                cv2.putText(frame, f"FPS: {self.current_fps}", (10, info_y + 50),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(frame, f"FPS: {self.current_fps}", (5, info_y + 20),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+            # Resolución para verificar
+            cv2.putText(frame, f"640x640", (5, info_y + 40),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
             
             return frame
             
@@ -617,7 +660,7 @@ class VideoProcessor:
                     # Fallback a velocidad del tracker
                     if not calculated_speed and hasattr(track, 'average_velocity'):
                         if track.average_velocity > 0:
-                            calculated_speed = track.average_velocity * 3.6  # convertir a km/h
+                            calculated_speed = track.average_velocity * 3.6
                     
                     crossing_data = {
                         'vehicle_id': crossing['vehicle_id'],
@@ -638,7 +681,8 @@ class VideoProcessor:
                         'metadata': {
                             'center': crossing['center'],
                             'timestamp': crossing['timestamp'],
-                            'model_type': getattr(self.detector, 'model_type', 'unknown')
+                            'model_type': getattr(self.detector, 'model_type', 'unknown'),
+                            'frame_size': '640x640'  # ✅ REGISTRAR RESOLUCIÓN
                         }
                     }
                     
@@ -687,5 +731,7 @@ class VideoProcessor:
             'rtsp_url_configured': bool(self.camera_config.get('rtsp_url')),
             'detector_available': self.detector is not None,
             'tracker_available': self.tracker is not None,
-            'analyzer_available': self.analyzer is not None
+            'analyzer_available': self.analyzer is not None,
+            'resolution': f"{self.TARGET_WIDTH}x{self.TARGET_HEIGHT}",  # ✅ SIEMPRE 640x640
+            'input_size': self.PROCESSING_SIZE
         }
