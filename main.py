@@ -489,44 +489,82 @@ async def health():
         "optimization_status": "NPU RKNN" if rknn_model_available and rknn_available else "CPU"
     }
 
-# ✅ CONFIGURACIÓN DE CÁMARA - CORREGIDA
 @app.get("/api/camera/config")
 async def get_camera_config_api():
-    """Obtener configuración de cámara"""
-    config = load_camera_config()
-    return config
+    """Obtener configuración de cámara - CORREGIDO"""
+    try:
+        config = load_camera_config()
+        logger.debug(f"📤 Enviando config: RTSP={bool(config.get('rtsp_url'))}")
+        return config
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/camera/config")
-async def update_camera_config_api(config: CameraConfig):
-    """Actualizar configuración de cámara"""
+async def update_camera_config_api(config: CameraConfig, token: str = Depends(verify_token)):
+    """Actualizar configuración - ARREGLAR GUARDADO"""
     try:
-        logger.info(f"📥 Recibiendo configuración: RTSP={bool(config.rtsp_url)}")
+        logger.info(f"📥 Guardando configuración: RTSP={bool(config.rtsp_url)}")
         
-        # Convertir a dict
+        # Convertir y forzar resolución
         config_dict = config.dict()
-        
-        # ✅ FORZAR RESOLUCIÓN PARA RKNN
         config_dict["resolution"] = "640x640"
         config_dict["frame_rate"] = "30"
+        config_dict["enabled"] = bool(config.rtsp_url and config.rtsp_url.strip())
         
+        # ✅ GUARDAR INMEDIATAMENTE
         if not save_camera_config(config_dict):
             raise HTTPException(status_code=500, detail="Error guardando configuración")
         
-        # ✅ REINICIAR VIDEO PROCESSOR SIEMPRE QUE HAYA RTSP
+        # ✅ VERIFICAR QUE SE GUARDÓ
+        saved_config = load_camera_config()
+        if saved_config.get("rtsp_url") != config.rtsp_url:
+            logger.error("❌ La configuración no se guardó correctamente")
+            raise HTTPException(status_code=500, detail="La configuración no se persistió")
+        
+        logger.info("✅ Configuración verificada y guardada")
+        
+        # Reiniciar video processor solo si hay RTSP
         processor_started = False
         if config.rtsp_url and config.rtsp_url.strip():
+            logger.info("🔄 Reiniciando video processor...")
             processor_started = await restart_video_processor()
         
         return {
-            "message": "Configuración guardada exitosamente",
+            "message": "Configuración guardada y verificada exitosamente",
             "config_saved": True,
+            "config_verified": saved_config.get("rtsp_url") == config.rtsp_url,
             "video_processor_started": processor_started,
             "rtsp_configured": bool(config.rtsp_url),
-            "resolution_forced": "640x640"
+            "resolution_forced": "640x640",
+            "enabled": config_dict["enabled"]
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"❌ Error actualizando configuración: {e}")
+        logger.error(f"❌ Error crítico guardando configuración: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+# ✅ RUTA PARA VERIFICAR CONFIGURACIÓN
+@app.get("/api/camera/config/verify")
+async def verify_camera_config_api():
+    """Verificar que la configuración se guardó correctamente"""
+    try:
+        config = load_camera_config()
+        config_file = get_config_file_path()
+        
+        return {
+            "config_file_exists": os.path.exists(config_file),
+            "config_file_path": config_file,
+            "rtsp_configured": bool(config.get("rtsp_url")),
+            "rtsp_url_length": len(config.get("rtsp_url", "")),
+            "last_updated": config.get("last_updated"),
+            "enabled": config.get("enabled", False),
+            "config_content": {k: v if k != "password" else "***" for k, v in config.items()}
+        }
+    except Exception as e:
+        logger.error(f"❌ Error verificando config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/camera/config/reset")
@@ -779,21 +817,46 @@ def _generate_error_frame():
 # Configuración del sistema
 @app.get("/api/config/system")
 async def get_system_config_api():
-    config = load_system_config()
-    return config
+    """Obtener configuración del sistema"""
+    try:
+        config = load_system_config()
+        return config
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo config sistema: {e}")
+        return {
+            "confidence_threshold": 0.4,  # ✅ THRESHOLD MÁS BAJO
+            "night_vision_enhancement": True,
+            "show_overlay": True,
+            "data_retention_days": 30,
+            "target_fps": 30,
+            "log_level": "INFO"
+        }
 
 @app.post("/api/config/system") 
-async def update_system_config_api(request: Request):
+async def update_system_config_api(request: Request, token: str = Depends(verify_token)):
+    """Actualizar configuración del sistema - CORREGIDA"""
     try:
         data = await request.json()
+        logger.info(f"📥 Actualizando config sistema: {list(data.keys())}")
+        
         current_config = load_system_config()
         current_config.update(data)
         
+        # ✅ GUARDAR Y VERIFICAR
         if save_system_config(current_config):
-            return {"message": "Configuración del sistema actualizada"}
+            saved_config = load_system_config()
+            logger.info("✅ Configuración del sistema guardada y verificada")
+            return {
+                "message": "Configuración del sistema actualizada",
+                "config_saved": True,
+                "config_verified": True,
+                "updated_keys": list(data.keys())
+            }
         else:
-            raise HTTPException(status_code=500, detail="Error guardando configuración")
+            raise HTTPException(status_code=500, detail="Error guardando configuración del sistema")
             
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Error actualizando config sistema: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -894,6 +957,52 @@ async def clear_analysis_api():
             raise HTTPException(status_code=500, detail="Error limpiando análisis")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/system/detailed_status")
+async def get_detailed_status():
+    """Estado detallado para debugging"""
+    try:
+        camera_config = load_camera_config()
+        system_config = load_system_config()
+        video_status = get_video_processor_status()
+        
+        # Verificar archivos
+        camera_config_exists = os.path.exists(get_config_file_path())
+        system_config_exists = os.path.exists(get_system_config_file_path())
+        analysis_config_exists = os.path.exists("/app/config/analysis.json")
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "video_processor": video_status,
+            "camera_config": {
+                "file_exists": camera_config_exists,
+                "rtsp_configured": bool(camera_config.get("rtsp_url")),
+                "enabled": camera_config.get("enabled", False),
+                "resolution": camera_config.get("resolution"),
+                "last_updated": camera_config.get("last_updated")
+            },
+            "system_config": {
+                "file_exists": system_config_exists,
+                "confidence_threshold": system_config.get("confidence_threshold"),
+                "target_fps": system_config.get("target_fps"),
+                "use_rknn": system_config.get("use_rknn")
+            },
+            "analysis_config": {
+                "file_exists": analysis_config_exists
+            },
+            "modules": {
+                "modules_available": MODULES_AVAILABLE,
+                "detector_type": getattr(video_processor, "detector", {}).get("model_type", "none") if video_processor else "none"
+            },
+            "files": {
+                "camera_config_path": get_config_file_path(),
+                "system_config_path": get_system_config_file_path(),
+                "analysis_config_path": "/app/config/analysis.json"
+            }
+        }
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo estado detallado: {e}")
+        return {"error": str(e), "timestamp": datetime.now().isoformat()}
 
 # Exportar datos
 @app.get("/api/data/export")

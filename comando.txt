@@ -37,6 +37,25 @@ chmod +x cleanup_script.sh
 
 sudo docker build --no-cache -t vehicle-detection-rknn .
 
+
+# Rebuild contenedor
+docker build --no-cache -t vehicle-detection-rknn .
+
+# Ejecutar con mejor configuración
+docker run -d \
+  --name vehicle-detection-rknn \
+  --restart unless-stopped \
+  --privileged \
+  -p 8000:8000 \
+  -v /usr/lib/librknnrt.so:/usr/lib/librknnrt.so:ro \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/config:/app/config \
+  -v $(pwd)/models:/app/models \
+  -v $(pwd)/logs:/app/logs \
+  -v /dev:/dev \
+  --device=/dev/dri --device=/dev/mali0 --device=/dev/dma_heap \
+  -e USE_RKNN=1 \
+  vehicle-detection-rknn
 # 8. EJECUTAR CONTENEDOR CON VOLUMEN PARA librknnrt.so
 docker run -d \
   --name vehicle-detection-rknn \
@@ -67,38 +86,6 @@ COMANDOS:
 #!/bin/bash
 set -e
 
-# 1. Limpiar
-docker stop vehicle-detection-rknn 2>/dev/null || true
-docker rm vehicle-detection-rknn 2>/dev/null || true
-docker rmi vehicle-detection-rknn 2>/dev/null || true
 
-# 2. Build
-docker build --no-cache -t vehicle-detection-rknn .
-
-# 3. Run
-docker run -d \
-  --name vehicle-detection-rknn \
-  --restart unless-stopped \
-  --privileged \
-  -p 8000:8000 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/config:/app/config \
-  -v $(pwd)/models:/app/models \
-  -v $(pwd)/logs:/app/logs \
-  -v /dev:/dev \
-  -v /sys:/sys:ro \
-  -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro \
-  --device=/dev/dri:/dev/dri \
-  --device=/dev/mali0:/dev/mali0 \
-  --device=/dev/dma_heap:/dev/dma_heap \
-  --device=/dev/rga:/dev/rga \
-  --device=/dev/mpp_service:/dev/mpp_service \
-  -e USE_RKNN=1 \
-  -e PYTHONPATH=/app \
-  vehicle-detection-rknn
-
-# 4. Esperar arranque
-sleep 5
-curl http://localhost:8000/api/camera_health || echo "⚠️ Falló conexión"
 
 
