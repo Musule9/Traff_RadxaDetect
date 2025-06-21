@@ -64,13 +64,7 @@ RUN pip install --no-cache-dir opencv-python-headless==4.8.1.78
 RUN pip install --no-cache-dir rknn-toolkit-lite2==2.3.2
 
 # Crear directorios necesarios
-RUN mkdir -p /app/models /app/data /app/config /app/logs
-
-# Descargar modelo YOLO11n base si no existe
-RUN cd /app/models && \
-    if [ ! -f "yolo11n.pt" ]; then \
-        wget -q https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt; \
-    fi
+RUN mkdir -p /app/data /app/config /app/logs
 
 # Variables de entorno
 ENV PYTHONPATH="/app:$PYTHONPATH"

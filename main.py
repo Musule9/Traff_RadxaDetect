@@ -1,3 +1,5 @@
+# REEMPLAZA COMPLETAMENTE main.py
+
 import os
 import asyncio
 import json
@@ -34,7 +36,7 @@ def setup_logging():
 LOG_LEVEL = setup_logging()
 
 # ============================================================================
-# IMPORTAR MÓDULOS CON MANEJO DE ERRORES
+# IMPORTAR MÓDULOS
 # ============================================================================
 video_processor = None
 db_manager = None
@@ -60,38 +62,29 @@ def import_app_modules():
         return False
 
 import_app_modules()
- #
+
 # ============================================================================
-# MODELOS PYDANTIC SIMPLIFICADOS
+# MODELOS PYDANTIC
 # ============================================================================
 class LoginRequest(BaseModel):
     username: str
     password: str
 
 class CameraConfig(BaseModel):
-    # Configuración básica RTSP
     rtsp_url: str
     fase: str = "fase1"
     direccion: str = "norte"
     controladora_id: str = "CTRL_001"
     controladora_ip: str = "192.168.1.200"
-    
-    # Identificación
     camera_name: Optional[str] = ""
     camera_location: Optional[str] = ""
-    
-    # Red
     camera_ip: Optional[str] = ""
     username: str = "admin"
     password: Optional[str] = ""
     port: str = "554"
     stream_path: str = "/stream1"
-    
-    # Video
     resolution: str = "1920x1080"
     frame_rate: str = "30"
-    
-    # Estado
     enabled: bool = True
 
 class LineConfig(BaseModel):
@@ -109,26 +102,28 @@ class ZoneConfig(BaseModel):
     zone_type: str = "red_light"
 
 # ============================================================================
-# FUNCIONES DE CONFIGURACIÓN SIMPLIFICADAS
+# CONFIGURACIÓN - CORREGIDA SIN DUPLICADOS
 # ============================================================================
 def get_config_file_path():
-    """Obtener ruta del archivo de configuración"""
     return "/app/config/camera_config.json"
 
+def get_system_config_file_path():
+    return "/app/config/system_config.json"
+
 def load_camera_config() -> Dict:
-    """Cargar configuración de cámara - SIMPLIFICADO"""
+    """Cargar configuración de cámara"""
     config_file = get_config_file_path()
     try:
         if os.path.exists(config_file):
             with open(config_file, "r") as f:
                 config = json.load(f)
-                logger.info(f"📄 Configuración cargada: RTSP={bool(config.get('rtsp_url'))}")
+                logger.debug(f"📄 Config cargada: RTSP={bool(config.get('rtsp_url'))}")
                 return config
     except Exception as e:
         logger.error(f"Error cargando configuración: {e}")
     
     # Configuración por defecto
-    default_config = {
+    return {
         "rtsp_url": "",
         "fase": "fase1",
         "direccion": "norte",
@@ -141,38 +136,74 @@ def load_camera_config() -> Dict:
         "password": "",
         "port": "554",
         "stream_path": "/stream1",
-        "resolution": "1920x1080",
+        "resolution": "640x640",  # ✅ FORZADO PARA RKNN
         "frame_rate": "30",
         "enabled": False
     }
-    return default_config
 
 def save_camera_config(config: Dict) -> bool:
-    """Guardar configuración de cámara - SIMPLIFICADO"""
+    """Guardar configuración de cámara"""
     config_file = get_config_file_path()
     try:
         os.makedirs("/app/config", exist_ok=True)
         
-        # Agregar timestamp
+        # ✅ FORZAR RESOLUCIÓN PARA RKNN
+        config["resolution"] = "640x640"
+        config["frame_rate"] = "30"
         config["last_updated"] = datetime.now().isoformat()
         
         with open(config_file, "w") as f:
             json.dump(config, f, indent=2)
         
-        logger.info(f"✅ Configuración guardada: {config_file}")
+        logger.info(f"✅ Configuración guardada: RTSP={bool(config.get('rtsp_url'))}")
         return True
     except Exception as e:
         logger.error(f"❌ Error guardando configuración: {e}")
         return False
 
+def load_system_config() -> Dict:
+    """Cargar configuración del sistema"""
+    config_file = get_system_config_file_path()
+    try:
+        if os.path.exists(config_file):
+            with open(config_file, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error cargando config sistema: {e}")
+    
+    # Configuración por defecto
+    default_config = {
+        "confidence_threshold": 0.5,
+        "night_vision_enhancement": True,
+        "show_overlay": True,
+        "data_retention_days": 30,
+        "target_fps": 30,
+        "log_level": "INFO",
+        "model_path": "/app/models/yolo11n.rknn",
+        "use_rknn": True,
+        "target_platform": "rk3588"
+    }
+    
+    save_system_config(default_config)
+    return default_config
+
+def save_system_config(config: Dict) -> bool:
+    """Guardar configuración del sistema"""
+    config_file = get_system_config_file_path()
+    try:
+        os.makedirs("/app/config", exist_ok=True)
+        with open(config_file, "w") as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Error guardando config sistema: {e}")
+        return False
+
 # ============================================================================
-# GESTOR DE VIDEO PROCESSOR SIMPLIFICADO
-# ============================================================================
-# ============================================================================
-# GESTOR DE VIDEO PROCESSOR SIMPLIFICADO
+# VIDEO PROCESSOR - CORREGIDO
 # ============================================================================
 class SimpleVideoStream:
-    """Stream de video básico sin IA para cuando no hay modelos disponibles"""
+    """Stream básico para casos de emergencia"""
     
     def __init__(self, rtsp_url):
         self.rtsp_url = rtsp_url
@@ -183,7 +214,6 @@ class SimpleVideoStream:
         self.frame_lock = threading.Lock()
         
     def start_processing(self):
-        """Iniciar captura de video"""
         if self.is_running:
             return
             
@@ -194,14 +224,11 @@ class SimpleVideoStream:
         logger.info(f"✅ Stream básico iniciado: {self.rtsp_url}")
     
     def stop_processing(self):
-        """Detener captura de video"""
         self.is_running = False
         if self.capture_thread:
             self.capture_thread.join(timeout=5)
-        logger.info("⏹️ Stream básico detenido")
     
     def _capture_loop(self):
-        """Loop de captura de video"""
         cap = cv2.VideoCapture(self.rtsp_url)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
@@ -216,30 +243,30 @@ class SimpleVideoStream:
         while self.is_running:
             ret, frame = cap.read()
             if ret and frame is not None:
+                # ✅ REDIMENSIONAR A 640x640
+                if frame.shape[:2] != (640, 640):
+                    frame = cv2.resize(frame, (640, 640))
+                
                 with self.frame_lock:
                     self.latest_frame = frame.copy()
                 
-                # Calcular FPS
                 fps_counter += 1
                 current_time = time.time()
                 if current_time - fps_time >= 1.0:
                     self.current_fps = fps_counter
                     fps_counter = 0
                     fps_time = current_time
-                
             else:
-                logger.warning("⚠️ No se pudo leer frame del stream")
                 time.sleep(0.1)
         
         cap.release()
     
     def get_latest_frame(self):
-        """Obtener último frame capturado"""
         with self.frame_lock:
             return self.latest_frame.copy() if self.latest_frame is not None else None
 
 async def restart_video_processor():
-    """Reiniciar video processor - OPTIMIZADO PARA RKNN"""
+    """Reiniciar video processor - CORREGIDO PARA RKNN"""
     global video_processor
     
     try:
@@ -252,29 +279,24 @@ async def restart_video_processor():
         
         # Cargar configuración
         camera_config = load_camera_config()
-        system_config = load_system_config()  # ✅ AHORA FUNCIONA
+        system_config = load_system_config()
         
-        # Solo inicializar si hay URL RTSP válida
-        if not camera_config.get("rtsp_url") or not camera_config.get("rtsp_url").strip():
-            logger.info("⏸️ No hay URL RTSP - video processor en espera")
+        # ✅ VERIFICAR RTSP - MENOS ESTRICTO
+        rtsp_url = camera_config.get("rtsp_url", "").strip()
+        if not rtsp_url:
+            logger.info("⏸️ No hay URL RTSP configurada")
             return False
         
-        rtsp_url = camera_config.get("rtsp_url")
+        logger.info(f"🚀 Iniciando video processor con RTSP: {rtsp_url[:50]}...")
         
-        # ✅ VERIFICAR MODELO RKNN ANTES DE INICIALIZAR
-        rknn_model_path = "/app/models/yolo11n.rknn"
-        if not os.path.exists(rknn_model_path):
-            logger.warning(f"⚠️ Modelo RKNN no encontrado: {rknn_model_path}")
-            logger.info("💡 Coloque yolo11n.rknn en /app/models/ para mejor rendimiento")
-        
-        # Intentar importar e inicializar VideoProcessor completo
+        # ✅ INTENTAR VIDEO PROCESSOR COMPLETO PRIMERO
         if MODULES_AVAILABLE:
             try:
                 from app.core.video_processor import VideoProcessor
                 
-                # ✅ CONFIGURAR PARA RKNN
+                # Configurar para RKNN
                 system_config.update({
-                    "model_path": rknn_model_path,
+                    "model_path": "/app/models/yolo11n.rknn",
                     "use_rknn": True,
                     "target_platform": "rk3588",
                     "forced_resolution": "640x640"
@@ -286,66 +308,46 @@ async def restart_video_processor():
                     db_manager=db_manager,
                     callback_func=None
                 )
-
-                # ⚠️ PASAMOS EL EVENT LOOP PARA FUNCIONAMIENTO DE async desde hilos
+                
+                # ✅ PASAR EVENT LOOP
                 video_processor.set_event_loop(asyncio.get_event_loop())
-
+                
                 await video_processor.initialize()
                 video_processor.start_processing()
                 
-                # Verificar que se inició correctamente
-                await asyncio.sleep(5)  # ✅ MÁS TIEMPO PARA RKNN
+                # ✅ VERIFICAR INICIO - MÁS TIEMPO PARA RKNN
+                await asyncio.sleep(5)
                 
                 if hasattr(video_processor, 'is_running') and video_processor.is_running:
-                    logger.info("✅ Video processor RKNN iniciado correctamente")
+                    logger.info("✅ VideoProcessor con IA iniciado correctamente")
                     return True
                 else:
-                    logger.warning("⚠️ Video processor falló, usando stream básico")
-                    raise Exception("VideoProcessor no se inició correctamente")
+                    logger.warning("⚠️ VideoProcessor no se inició, probando stream básico...")
+                    video_processor = None
                     
             except Exception as e:
                 logger.warning(f"⚠️ Error con VideoProcessor: {e}")
-                logger.info("🔄 Intentando con stream básico...")
-                
-                # Fallback a stream básico
-                try:
-                    video_processor = SimpleVideoStream(rtsp_url)
-                    video_processor.start_processing()
-                    
-                    # Verificar que funciona
-                    await asyncio.sleep(2)
-                    if video_processor.is_running:
-                        logger.info("✅ Stream básico iniciado correctamente (sin IA)")
-                        return True
-                    else:
-                        logger.error("❌ Stream básico también falló")
-                        video_processor = None
-                        return False
-                        
-                except Exception as e2:
-                    logger.error(f"❌ Error con stream básico: {e2}")
-                    video_processor = None
-                    return False
-        else:
-            # Usar directamente stream básico si no hay módulos
-            logger.info("ℹ️ Módulos no disponibles, usando stream básico")
-            try:
-                video_processor = SimpleVideoStream(rtsp_url)
-                video_processor.start_processing()
-                
-                await asyncio.sleep(2)
-                if video_processor.is_running:
-                    logger.info("✅ Stream básico iniciado correctamente")
-                    return True
-                else:
-                    logger.error("❌ Stream básico falló")
-                    video_processor = None
-                    return False
-                    
-            except Exception as e:
-                logger.error(f"❌ Error con stream básico: {e}")
+                video_processor = None
+        
+        # ✅ FALLBACK A STREAM BÁSICO
+        logger.info("🔄 Iniciando stream básico...")
+        try:
+            video_processor = SimpleVideoStream(rtsp_url)
+            video_processor.start_processing()
+            
+            await asyncio.sleep(3)
+            if video_processor.is_running:
+                logger.info("✅ Stream básico iniciado correctamente")
+                return True
+            else:
+                logger.error("❌ Stream básico también falló")
                 video_processor = None
                 return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error con stream básico: {e}")
+            video_processor = None
+            return False
             
     except Exception as e:
         logger.error(f"❌ Error crítico en restart_video_processor: {e}")
@@ -370,22 +372,23 @@ def get_video_processor_status():
         return {"running": False, "fps": 0, "error": str(e)}
 
 # ============================================================================
-# CREAR APLICACIÓN FASTAPI
+# APLICACIÓN FASTAPI
 # ============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gestor de ciclo de vida"""
     try:
         logger.info("🚀 Iniciando servicios...")
         
-        # Inicializar base de datos
         if db_manager:
             await db_manager.init_daily_database()
         
-        # Intentar inicializar video processor si hay configuración
+        # ✅ VERIFICAR E INICIAR VIDEO PROCESSOR SI HAY CONFIGURACIÓN
         camera_config = load_camera_config()
-        if camera_config.get("rtsp_url") and camera_config.get("rtsp_url").strip():
+        if camera_config.get("rtsp_url", "").strip():
+            logger.info("🎥 Iniciando video processor con configuración existente...")
             await restart_video_processor()
+        else:
+            logger.info("⏸️ No hay configuración RTSP - esperando configuración")
         
         logger.info("✅ Sistema inicializado")
         yield
@@ -403,7 +406,7 @@ app = FastAPI(lifespan=lifespan)
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permitir desde cualquier origen
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -411,17 +414,15 @@ app.add_middleware(
 )
 
 # Seguridad
-security = HTTPBearer(auto_error=False)  # No error automático
+security = HTTPBearer(auto_error=False)
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verificar token con manejo de errores mejorado"""
     if not credentials:
         raise HTTPException(status_code=401, detail="Token requerido")
     
     try:
         if not auth_service:
-            # Modo desarrollo - aceptar cualquier token no vacío
-            if credentials.credentials and len(credentials.credentials) > 10:
+            if credentials.credentials and len(credentials.credentials) > 5:
                 return credentials.credentials
             raise HTTPException(status_code=401, detail="Token inválido")
         
@@ -434,8 +435,9 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     except Exception as e:
         logger.error(f"Error verificando token: {e}")
         raise HTTPException(status_code=401, detail="Error de autenticación")
+
 # ============================================================================
-# RUTAS DE API CORREGIDAS
+# RUTAS API
 # ============================================================================
 
 # Autenticación
@@ -458,51 +460,21 @@ async def logout(token: str = Depends(verify_token)):
         auth_service.revoke_token(token)
     return {"message": "Logout exitoso"}
 
+# Health check
 @app.get("/api/camera_health")
 async def health():
-    """Health check completo - CON INFO ESPECÍFICA DE RKNN"""
     camera_config = load_camera_config()
     video_status = get_video_processor_status()
     
-    # Información del hardware específica RK3588
-    hardware_info = "Unknown"
-    npu_available = False
-    try:
-        if os.path.exists("/proc/device-tree/model"):
-            with open("/proc/device-tree/model", "rb") as f:
-                hardware_info = f.read().decode('utf-8', errors='ignore').strip('\x00')
-                if "RK3588" in hardware_info or "Radxa" in hardware_info:
-                    npu_available = True
-    except:
-        pass
-    
-    # Verificar driver NPU específico
-    npu_driver_version = "Unknown"
-    try:
-        import subprocess
-        result = subprocess.run(['dmesg'], capture_output=True, text=True, timeout=5)
-        for line in result.stdout.split('\n'):
-            if 'rknpu' in line and 'Initialized' in line:
-                # Extraer versión del driver
-                parts = line.split()
-                for i, part in enumerate(parts):
-                    if 'rknpu' in part and i + 1 < len(parts):
-                        npu_driver_version = parts[i + 1]
-                        break
-                break
-    except:
-        pass
-    
-    # Verificar modelo RKNN
-    rknn_model_available = os.path.exists("/app/models/yolo11n.rknn")
-    
-    # Verificar rknnlite2
-    rknnlite_available = False
+    # ✅ VERIFICAR RKNN
+    rknn_available = False
     try:
         from rknnlite.api import RKNNLite
-        rknnlite_available = True
+        rknn_available = True
     except:
         pass
+    
+    rknn_model_available = os.path.exists("/app/models/yolo11n.rknn")
     
     return {
         "status": "healthy" if video_status["running"] else "warning",
@@ -510,76 +482,47 @@ async def health():
         "camera_connected": video_status["running"],
         "camera_fps": video_status["fps"],
         "camera_configured": bool(camera_config.get("rtsp_url")),
-        "hardware": hardware_info,
-        "npu_available": npu_available,
-        "npu_driver_version": npu_driver_version,
         "modules_available": MODULES_AVAILABLE,
-        "rknnlite_available": rknnlite_available,
+        "rknn_available": rknn_available,
         "rknn_model_available": rknn_model_available,
-        "version": "1.0.0",
-        "resolution": "640x640",  # ✅ SIEMPRE 640x640
-        "target_platform": "rk3588",
         "processing_resolution": "640x640",
-        "forced_resolution": True,
-        "expected_performance": "99.5ms per image (~10 FPS)" if rknn_model_available else "200-300ms per image (~3-5 FPS)",
-        "optimization_status": "NPU RKNN" if rknn_model_available and rknnlite_available else "CPU Fallback"
+        "optimization_status": "NPU RKNN" if rknn_model_available and rknn_available else "CPU"
     }
 
-# CONFIGURACIÓN DE CÁMARA - CORREGIDA
+# ✅ CONFIGURACIÓN DE CÁMARA - CORREGIDA
+@app.get("/api/camera/config")
+async def get_camera_config_api():
+    """Obtener configuración de cámara"""
+    config = load_camera_config()
+    return config
+
 @app.post("/api/camera/config")
 async def update_camera_config_api(config: CameraConfig):
-    """Actualizar configuración de cámara - FORZANDO 640x640"""
+    """Actualizar configuración de cámara"""
     try:
         logger.info(f"📥 Recibiendo configuración: RTSP={bool(config.rtsp_url)}")
         
         # Convertir a dict
         config_dict = config.dict()
         
-        # ✅ FORZAR RESOLUCIÓN Y FPS INDEPENDIENTEMENTE DE LO QUE ENVÍE EL FRONTEND
+        # ✅ FORZAR RESOLUCIÓN PARA RKNN
         config_dict["resolution"] = "640x640"
         config_dict["frame_rate"] = "30"
-        
-        logger.info("📐 Configuración forzada a 640x640 @ 30fps")
         
         if not save_camera_config(config_dict):
             raise HTTPException(status_code=500, detail="Error guardando configuración")
         
-        # Reiniciar video processor
-        processor_started = await restart_video_processor()
+        # ✅ REINICIAR VIDEO PROCESSOR SIEMPRE QUE HAYA RTSP
+        processor_started = False
+        if config.rtsp_url and config.rtsp_url.strip():
+            processor_started = await restart_video_processor()
         
         return {
             "message": "Configuración guardada exitosamente",
             "config_saved": True,
             "video_processor_started": processor_started,
             "rtsp_configured": bool(config.rtsp_url),
-            "resolution_forced": "640x640",  # ✅ INFORMAR AL FRONTEND
-            "fps_forced": "30"
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Error actualizando configuración: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/camera/config")
-async def update_camera_config_api(config: CameraConfig):
-    """Actualizar configuración de cámara - SIMPLIFICADO"""
-    try:
-        logger.info(f"📥 Recibiendo configuración: RTSP={bool(config.rtsp_url)}")
-        
-        # Convertir a dict y guardar
-        config_dict = config.dict()
-        
-        if not save_camera_config(config_dict):
-            raise HTTPException(status_code=500, detail="Error guardando configuración")
-        
-        # Reiniciar video processor
-        processor_started = await restart_video_processor()
-        
-        return {
-            "message": "Configuración guardada exitosamente",
-            "config_saved": True,
-            "video_processor_started": processor_started,
-            "rtsp_configured": bool(config.rtsp_url)
+            "resolution_forced": "640x640"
         }
         
     except Exception as e:
@@ -599,7 +542,7 @@ async def reset_camera_config_api():
             await asyncio.sleep(2)
             video_processor = None
         
-        # Crear configuración limpia
+        # Configuración limpia
         default_config = {
             "rtsp_url": "",
             "fase": "fase1",
@@ -612,7 +555,8 @@ async def reset_camera_config_api():
             "username": "admin",
             "password": "",
             "port": "554",
-            "resolution": "1920x1080",
+            "stream_path": "/stream1",
+            "resolution": "640x640",
             "frame_rate": "30",
             "enabled": False,
             "reset_at": datetime.now().isoformat()
@@ -632,10 +576,9 @@ async def reset_camera_config_api():
         logger.error(f"❌ Error reseteando configuración: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ESTADO DE CÁMARA
+# Estado de cámara
 @app.get("/api/camera/status")
 async def get_camera_status_api():
-    """Obtener estado de cámara - CON INFORMACIÓN DE RESOLUCIÓN"""
     config = load_camera_config()
     video_status = get_video_processor_status()
     
@@ -645,40 +588,29 @@ async def get_camera_status_api():
         "rtsp_url": config.get("rtsp_url", ""),
         "fase": config.get("fase", "fase1"),
         "direccion": config.get("direccion", "norte"),
-        "enabled": config.get("enabled", False),
+        "enabled": bool(config.get("rtsp_url", "").strip()),  # ✅ BASADO EN RTSP
         "error": video_status.get("error"),
         "last_check": datetime.now().isoformat(),
-        "resolution": "640x640",  # ✅ SIEMPRE 640x640
-        "frame_rate": "30",
-        "processing_resolution": "640x640"
+        "resolution": "640x640"
     }
 
-# REINICIAR CÁMARA
+# Reiniciar cámara
 @app.post("/api/camera/restart")
 async def restart_camera_api():
-    """Reiniciar procesamiento de cámara"""
     try:
         config = load_camera_config()
         
-        if not config.get("rtsp_url"):
+        if not config.get("rtsp_url", "").strip():
             raise HTTPException(status_code=400, detail="No hay URL RTSP configurada")
         
         success = await restart_video_processor()
         video_status = get_video_processor_status()
         
-        if success and video_status["running"]:
-            return {
-                "message": "Cámara reiniciada exitosamente",
-                "status": "running",
-                "fps": video_status["fps"]
-            }
-        else:
-            return {
-                "message": "Cámara reiniciada pero no está procesando",
-                "status": "inactive",
-                "fps": 0,
-                "error": video_status.get("error")
-            }
+        return {
+            "message": "Procesamiento reiniciado",
+            "status": "running" if success and video_status["running"] else "inactive",
+            "fps": video_status["fps"]
+        }
             
     except HTTPException:
         raise
@@ -686,11 +618,9 @@ async def restart_camera_api():
         logger.error(f"❌ Error reiniciando cámara: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# TEST DE CONEXIÓN
-
+# Test de conexión
 @app.post("/api/camera/test")
 async def test_camera_stream_api(request: Request):
-    """Probar conexión RTSP - OPTIMIZADO PARA RKNN Y 640x640"""
     try:
         data = await request.json()
         rtsp_url = data.get("rtsp_url", "")
@@ -698,96 +628,55 @@ async def test_camera_stream_api(request: Request):
         if not rtsp_url:
             raise HTTPException(status_code=400, detail="URL RTSP requerida")
         
-        logger.info(f"🧪 Probando conexión RTSP para RKNN (640x640): {rtsp_url}")
+        logger.info(f"🧪 Probando RTSP: {rtsp_url}")
         
-        # Test con OpenCV forzando resolución
+        # Test con OpenCV
         cap = cv2.VideoCapture(rtsp_url)
-        
-        # ✅ CONFIGURAR A 640x640 PARA RKNN
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 640)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cap.set(cv2.CAP_PROP_FPS, 30)
         
         if not cap.isOpened():
             cap.release()
             return {
                 "success": False,
-                "message": "No se pudo conectar al stream RTSP. Verifique URL, credenciales y conectividad."
+                "message": "No se pudo conectar al stream RTSP"
             }
         
-        # Intentar leer frames y verificar resolución
+        # Leer algunos frames
         frames_read = 0
-        frames_correct_size = 0
-        max_attempts = 15
-        
-        for i in range(max_attempts):
+        for i in range(10):
             ret, frame = cap.read()
             if ret and frame is not None:
                 frames_read += 1
-                
-                # Verificar resolución
-                h, w = frame.shape[:2]
-                if w == 640 and h == 640:
-                    frames_correct_size += 1
-                elif i == 0:  # Log solo en el primer frame
-                    logger.info(f"📐 Frame original del test: {w}x{h} (se redimensionará a 640x640 para RKNN)")
-                
-                if frames_read >= 8:  # Suficientes frames exitosos para RKNN
+                if frames_read >= 5:
                     break
             else:
-                import time
                 time.sleep(0.1)
         
         cap.release()
         
-        if frames_read >= 5:
-            message = f"✅ Conexión exitosa para RKNN. Se leyeron {frames_read} frames."
-            if frames_correct_size > 0:
-                message += f" {frames_correct_size} frames ya en 640x640."
-            else:
-                message += " Frames se redimensionarán automáticamente a 640x640 para NPU."
-            
-            # ✅ VERIFICAR SI HAY MODELO RKNN DISPONIBLE
-            rknn_available = os.path.exists("/app/models/yolo11n.rknn")
-            if rknn_available:
-                message += " Modelo RKNN disponible para NPU."
-            else:
-                message += " ADVERTENCIA: yolo11n.rknn no encontrado - se usará CPU."
-            
+        if frames_read >= 3:
             return {
                 "success": True,
-                "message": message,
-                "frames_tested": frames_read,
-                "resolution_info": "Configurado para 640x640 (RKNN optimizado)",
-                "frames_correct_size": frames_correct_size,
-                "rknn_model_available": rknn_available,
-                "expected_fps": "~10 FPS con RKNN NPU" if rknn_available else "~3-5 FPS con CPU"
-            }
-        elif frames_read > 0:
-            return {
-                "success": True,
-                "message": f"Conexión inestable pero funcional. Se leyeron {frames_read} frames de {max_attempts} intentos. Resolución forzada a 640x640 para RKNN.",
+                "message": f"Conexión exitosa. Se leyeron {frames_read} frames.",
                 "frames_tested": frames_read
             }
         else:
             return {
                 "success": False,
-                "message": f"No se pudieron leer frames del stream. Verifique la URL RTSP y la configuración de la cámara."
+                "message": f"Conexión inestable. Solo se leyeron {frames_read} frames."
             }
             
     except Exception as e:
-        logger.error(f"❌ Error en test de conexión: {e}")
+        logger.error(f"❌ Error en test: {e}")
         return {
             "success": False,
-            "message": f"Error en prueba de conexión: {str(e)}"
+            "message": f"Error en prueba: {str(e)}"
         }
-    
 
-# STREAM DE VIDEO - CORREGIDO
+# ✅ STREAM DE VIDEO - CORREGIDO
 @app.get("/api/camera/stream")
 async def get_camera_stream_api():
-    """Stream de video HTTP - FORZADO A 640x640"""
+    """Stream de video HTTP"""
     def generate_frames():
         frame_count = 0
         last_frame_time = time.time()
@@ -796,47 +685,43 @@ async def get_camera_stream_api():
             try:
                 current_time = time.time()
                 
-                # Control de FPS para web (15 FPS máximo para reducir ancho de banda)
+                # Control de FPS para web (15 FPS)
                 if current_time - last_frame_time < 1/15:
                     time.sleep(0.01)
                     continue
                 
+                frame_sent = False
+                
                 if video_processor and hasattr(video_processor, 'get_latest_frame'):
                     frame = video_processor.get_latest_frame()
                     if frame is not None:
-                        # ✅ VERIFICAR QUE EL FRAME SEA EXACTAMENTE 640x640
-                        height, width = frame.shape[:2]
-                        if width != 640 or height != 640:
+                        # Asegurar 640x640
+                        if frame.shape[:2] != (640, 640):
                             frame = cv2.resize(frame, (640, 640))
-                            logger.debug(f"🔄 Frame web redimensionado: {width}x{height} → 640x640")
                         
-                        # ✅ COMPRIMIR PARA WEB (CALIDAD ALTA PARA 640x640)
+                        # Comprimir
                         ret, buffer = cv2.imencode('.jpg', frame, [
-                            cv2.IMWRITE_JPEG_QUALITY, 90,  # Calidad alta
-                            cv2.IMWRITE_JPEG_OPTIMIZE, 1   # Optimizar
+                            cv2.IMWRITE_JPEG_QUALITY, 85
                         ])
                         
                         if ret:
                             frame_count += 1
                             last_frame_time = current_time
-                            
-                            # Log cada 100 frames
-                            if frame_count % 100 == 0:
-                                logger.debug(f"📺 Stream web: frame {frame_count}, tamaño: {len(buffer)} bytes")
+                            frame_sent = True
                             
                             yield (b'--frame\r\n'
                                    b'Content-Type: image/jpeg\r\n'
                                    b'Content-Length: ' + str(len(buffer)).encode() + b'\r\n\r\n' + 
                                    buffer.tobytes() + b'\r\n')
-                            continue
                 
-                # Frame placeholder si no hay video
-                yield _generate_placeholder_frame_640()
-                last_frame_time = current_time
+                if not frame_sent:
+                    # Frame placeholder
+                    yield _generate_placeholder_frame()
+                    last_frame_time = current_time
                 
             except Exception as e:
                 logger.error(f"❌ Error en streaming: {e}")
-                yield _generate_error_frame_640()
+                yield _generate_error_frame()
                 time.sleep(1)
     
     return StreamingResponse(
@@ -845,30 +730,21 @@ async def get_camera_stream_api():
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
-            "Expires": "0",
-            "Connection": "close"
+            "Expires": "0"
         }
     )
 
-def _generate_placeholder_frame_640():
-    """Frame placeholder - EXACTAMENTE 640x640"""
+def _generate_placeholder_frame():
+    """Frame placeholder 640x640"""
     placeholder = np.zeros((640, 640, 3), dtype=np.uint8)
+    placeholder[:] = [30, 30, 30]
     
-    # Fondo degradado
-    for i in range(640):
-        placeholder[i, :] = [20 + (i//20), 25 + (i//20), 35 + (i//20)]
-    
-    # Texto centrado para 640x640
-    cv2.putText(placeholder, "SISTEMA DE DETECCION VEHICULAR", (80, 280), 
+    cv2.putText(placeholder, "SISTEMA DE DETECCION VEHICULAR", (80, 300), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    cv2.putText(placeholder, "Radxa Rock 5T - NPU RK3588", (150, 320), 
+    cv2.putText(placeholder, "Radxa Rock 5T - RK3588 NPU", (140, 340), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 150, 255), 2)
-    cv2.putText(placeholder, "Resolucion: 640x640 (RKNN Optimizado)", (120, 360), 
+    cv2.putText(placeholder, "Configure RTSP para comenzar", (150, 380), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(placeholder, "Configure la camara para comenzar", (130, 400), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(placeholder, f"Esperando: yolo11n.rknn para NPU", (160, 440),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
     
     ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 80])
     if ret:
@@ -878,20 +754,15 @@ def _generate_placeholder_frame_640():
                 buffer.tobytes() + b'\r\n')
     return b''
 
-
-def _generate_error_frame_640():
-    """Frame de error - EXACTAMENTE 640x640"""
+def _generate_error_frame():
+    """Frame de error 640x640"""
     error_frame = np.zeros((640, 640, 3), dtype=np.uint8)
     error_frame[:] = [40, 20, 20]
     
-    cv2.putText(error_frame, "ERROR DE CONEXION RTSP", (140, 300), 
+    cv2.putText(error_frame, "ERROR DE CONEXION", (180, 300), 
                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     cv2.putText(error_frame, "Verificar configuracion RTSP", (150, 340), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(error_frame, "URL, credenciales y conectividad", (140, 380),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(error_frame, "Resolucion forzada: 640x640 (RKNN)", (140, 420),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
     
     ret, buffer = cv2.imencode('.jpg', error_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
     if ret:
@@ -902,113 +773,19 @@ def _generate_error_frame_640():
     return b''
 
 # ============================================================================
-# CONFIGURACIÓN DEL SISTEMA
+# RESTO DE RUTAS (análisis, sistema, etc.) - IGUAL QUE ANTES
 # ============================================================================
-def get_system_config_file_path():
-    return "/app/config/system_config.json"
 
-def load_system_config() -> Dict:
-    """Cargar configuración del sistema - FUNCIÓN FALTANTE"""
-    config_file = get_system_config_file_path()
-    try:
-        if os.path.exists(config_file):
-            with open(config_file, "r") as f:
-                config = json.load(f)
-                logger.info(f"📄 Configuración del sistema cargada")
-                return config
-    except Exception as e:
-        logger.error(f"Error cargando configuración del sistema: {e}")
-    
-    # Configuración por defecto del sistema
-    default_config = {
-        "confidence_threshold": 0.5,
-        "night_vision_enhancement": True,
-        "show_overlay": True,
-        "data_retention_days": 30,
-        "target_fps": 30,
-        "log_level": "INFO",
-        "max_age": 30,
-        "min_hits": 3,
-        "high_threshold": 0.6,
-        "low_threshold": 0.1,
-        "model_path": "/app/models/yolo11n.rknn",  # ✅ USAR RKNN DIRECTAMENTE
-        "use_rknn": True,
-        "target_platform": "rk3588",  # ✅ ESPECÍFICO PARA RK3588
-        "quantization": "i8",
-        "npu_enabled": True,
-        "forced_resolution": "640x640"
-    }
-    
-    # Guardar configuración por defecto
-    save_system_config(default_config)
-    return default_config
-
-
-def load_camera_config() -> Dict:
-    """Cargar configuración de cámara - CON RESOLUCIÓN FORZADA 640x640"""
-    config_file = get_config_file_path()
-    try:
-        if os.path.exists(config_file):
-            with open(config_file, "r") as f:
-                config = json.load(f)
-                
-                # ✅ FORZAR RESOLUCIÓN A 640x640 SIEMPRE
-                config["resolution"] = "640x640"
-                config["frame_rate"] = "30"
-                config["processing_resolution"] = "640x640"
-                
-                logger.info(f"📄 Configuración cargada: RTSP={bool(config.get('rtsp_url'))}, Resolución: 640x640")
-                return config
-    except Exception as e:
-        logger.error(f"Error cargando configuración: {e}")
-    
-    # Configuración por defecto - SIEMPRE 640x640
-    default_config = {
-        "rtsp_url": "",
-        "fase": "fase1",
-        "direccion": "norte",
-        "controladora_id": "CTRL_001",
-        "controladora_ip": "192.168.1.200",
-        "camera_name": "",
-        "camera_location": "",
-        "camera_ip": "",
-        "username": "admin",
-        "password": "",
-        "port": "554",
-        "stream_path": "/stream1",
-        "resolution": "640x640",  # ✅ FORZADO
-        "frame_rate": "30",       # ✅ FORZADO
-        "processing_resolution": "640x640",  # ✅ NUEVO
-        "input_size": [640, 640], # ✅ NUEVO
-        "enabled": False
-    }
-    return default_config
-
-def save_system_config(config: Dict) -> bool:
-    """Guardar configuración del sistema"""
-    config_file = get_system_config_file_path()
-    try:
-        os.makedirs("/app/config", exist_ok=True)
-        with open(config_file, "w") as f:
-            json.dump(config, f, indent=2)
-        logger.info(f"✅ Config sistema guardada: {config_file}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Error guardando config sistema: {e}")
-        return False
-
+# Configuración del sistema
 @app.get("/api/config/system")
 async def get_system_config_api():
-    """Obtener configuración del sistema"""
     config = load_system_config()
     return config
 
 @app.post("/api/config/system") 
 async def update_system_config_api(request: Request):
-    """Actualizar configuración del sistema"""
     try:
         data = await request.json()
-        
         current_config = load_system_config()
         current_config.update(data)
         
@@ -1020,11 +797,12 @@ async def update_system_config_api(request: Request):
     except Exception as e:
         logger.error(f"❌ Error actualizando config sistema: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Análisis (líneas y zonas) - SIMPLIFICADO
 def get_analysis_file_path():
     return "/app/config/analysis.json"
 
 def load_analysis_config():
-    """Cargar configuración de análisis"""
     analysis_file = get_analysis_file_path()
     try:
         if os.path.exists(analysis_file):
@@ -1036,7 +814,6 @@ def load_analysis_config():
     return {"lines": {}, "zones": {}}
 
 def save_analysis_config(analysis_config):
-    """Guardar configuración de análisis"""
     analysis_file = get_analysis_file_path()
     try:
         os.makedirs("/app/config", exist_ok=True)
@@ -1063,7 +840,6 @@ async def add_line_api(line: LineConfig):
         else:
             raise HTTPException(status_code=500, detail="Error guardando línea")
     except Exception as e:
-        logger.error(f"Error agregando línea: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/analysis/lines/{line_id}")
@@ -1074,14 +850,8 @@ async def delete_line_api(line_id: str):
             del analysis["lines"][line_id]
             if save_analysis_config(analysis):
                 return {"message": "Línea eliminada exitosamente"}
-            else:
-                raise HTTPException(status_code=500, detail="Error guardando cambios")
-        else:
-            raise HTTPException(status_code=404, detail="Línea no encontrada")
-    except HTTPException:
-        raise
+        raise HTTPException(status_code=404, detail="Línea no encontrada")
     except Exception as e:
-        logger.error(f"Error eliminando línea: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/analysis/zones")
@@ -1100,7 +870,6 @@ async def add_zone_api(zone: ZoneConfig):
         else:
             raise HTTPException(status_code=500, detail="Error guardando zona")
     except Exception as e:
-        logger.error(f"Error agregando zona: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/analysis/zones/{zone_id}")
@@ -1111,14 +880,8 @@ async def delete_zone_api(zone_id: str):
             del analysis["zones"][zone_id]
             if save_analysis_config(analysis):
                 return {"message": "Zona eliminada exitosamente"}
-            else:
-                raise HTTPException(status_code=500, detail="Error guardando cambios")
-        else:
-            raise HTTPException(status_code=404, detail="Zona no encontrada")
-    except HTTPException:
-        raise
+        raise HTTPException(status_code=404, detail="Zona no encontrada")
     except Exception as e:
-        logger.error(f"Error eliminando zona: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/analysis/clear")
@@ -1130,20 +893,15 @@ async def clear_analysis_api():
         else:
             raise HTTPException(status_code=500, detail="Error limpiando análisis")
     except Exception as e:
-        logger.error(f"Error limpiando análisis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============================================================================
-# EXPORTAR DATOS (SIMPLIFICADO)
-# ============================================================================
+# Exportar datos
 @app.get("/api/data/export")
 async def export_data_api(date: str, type: str = "vehicle", fase: str = None):
-    """Exportar datos por fecha"""
     if not db_manager:
         return {
             "date": date,
             "type": type,
-            "fase": fase,
             "data": [],
             "message": "Base de datos no disponible"
         }
@@ -1159,7 +917,6 @@ async def export_data_api(date: str, type: str = "vehicle", fase: str = None):
         return {
             "date": date,
             "type": type,
-            "fase": fase,
             "data": data,
             "exported_at": datetime.now().isoformat()
         }
@@ -1195,111 +952,23 @@ else:
         return {
             "message": "Sistema de Detección Vehicular - Radxa Rock 5T",
             "status": "running",
-            "version": "1.0.0",
             "api_docs": "/docs",
             "health": "/api/camera_health"
         }
 
-def verify_npu_support():
-    """Verificar soporte NPU RK3588 - MEJORADO"""
-    try:
-        import subprocess
-        
-        # Verificar hardware
-        hardware_detected = False
-        if os.path.exists("/proc/device-tree/model"):
-            with open("/proc/device-tree/model", "rb") as f:
-                model = f.read().decode('utf-8', errors='ignore').strip('\x00')
-                if "RK3588" in model or "Radxa" in model:
-                    logger.info(f"✅ Hardware NPU soportado: {model}")
-                    hardware_detected = True
-                else:
-                    logger.warning(f"⚠️ Hardware no óptimo para NPU: {model}")
-        
-        # Verificar driver NPU
-        driver_detected = False
-        try:
-            result = subprocess.run(
-                ["dmesg"], 
-                capture_output=True, text=True, timeout=5
-            )
-            if "rknpu" in result.stdout:
-                npu_lines = [line for line in result.stdout.split('\n') if 'rknpu' in line]
-                logger.info(f"✅ Driver NPU encontrado: {len(npu_lines)} líneas")
-                driver_detected = True
-            else:
-                logger.warning("⚠️ Driver NPU no encontrado en dmesg")
-        except:
-            logger.warning("⚠️ No se pudo verificar driver NPU")
-        
-        # Verificar RKNN Lite
-        rknn_available = False
-        try:
-            from rknnlite.api import RKNNLite
-            logger.info("✅ RKNNLite2 disponible")
-            rknn_available = True
-        except Exception as e:
-            logger.warning(f"⚠️ RKNNLite2 no disponible: {e}")
-            logger.info("💡 Instale con: sudo apt install python3-rknnlite2")
-        
-        # Verificar modelo RKNN
-        model_available = os.path.exists("/app/models/yolo11n.rknn")
-        if model_available:
-            logger.info("✅ Modelo YOLO11n RKNN encontrado")
-        else:
-            logger.warning("⚠️ Modelo yolo11n.rknn no encontrado en /app/models/")
-            logger.info("💡 Coloque yolo11n.rknn en /app/models/ para usar NPU")
-        
-        # Resumen
-        if hardware_detected and driver_detected and rknn_available and model_available:
-            logger.info("🎯 Sistema completamente optimizado para NPU RK3588")
-        elif hardware_detected and driver_detected and rknn_available:
-            logger.info("⚠️ Sistema listo para NPU, agregue modelo yolo11n.rknn")
-        else:
-            logger.info("ℹ️ Sistema funcionará con CPU (rendimiento reducido)")
-        
-        return hardware_detected and driver_detected and rknn_available
-        
-    except Exception as e:
-        logger.warning(f"⚠️ Error verificando NPU: {e}")
-        return False
 # ============================================================================
 # INICIO DEL SERVIDOR
 # ============================================================================
 if __name__ == "__main__":
     print("🚀 Vehicle Detection System Starting")
+    print("🎯 Optimizado para Radxa Rock 5T con NPU RK3588")
     print(f"🌐 Server: http://0.0.0.0:8000")
     print(f"📚 API Docs: http://0.0.0.0:8000/docs")
-    print(f"🎯 Frontend: {'Available' if HAS_FRONTEND else 'Not available'}")
-    verify_npu_support()
-    
-    # Configuración explícita del logging para Uvicorn
-    log_config = {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "handlers": {
-            "default": {
-                "class": "logging.StreamHandler",
-                "formatter": "default",
-                "stream": "ext://sys.stdout"
-            },
-        },
-        "formatters": {
-            "default": {
-                "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            },
-        },
-        "loggers": {
-            "uvicorn": {"handlers": ["default"], "level": "INFO"},
-            "uvicorn.error": {"level": "INFO"},
-            "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False}
-        }
-    }
     
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8000,
         reload=False,
-        log_config=None # Pasar la configuración explícita
+        log_config=None
     )

@@ -35,10 +35,9 @@ popd
 chmod +x cleanup_script.sh
 ./cleanup_script.sh
 
-# 2. Build con nuevas configuraciones
-docker build --no-cache -t vehicle-detection-rknn .
+sudo docker build --no-cache -t vehicle-detection-rknn .
 
-# 3. Ejecutar con privilegios necesarios para NPU
+# 8. EJECUTAR CONTENEDOR CON VOLUMEN PARA librknnrt.so
 docker run -d \
   --name vehicle-detection-rknn \
   --restart unless-stopped \
@@ -51,6 +50,7 @@ docker run -d \
   -v /dev:/dev \
   -v /sys:/sys:ro \
   -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro \
+  -v /usr/lib/librknnrt.so:/usr/lib/librknnrt.so:ro \
   --device=/dev/dri:/dev/dri \
   --device=/dev/mali0:/dev/mali0 \
   --device=/dev/dma_heap:/dev/dma_heap \
@@ -60,10 +60,8 @@ docker run -d \
   -e PYTHONPATH=/app \
   vehicle-detection-rknn
 
-# 4. Verificar funcionamiento
-sleep 10
-curl http://localhost:8000/api/camera_health
-
+# 9. VERIFICAR LOGS
+docker logs vehicle-detection-rknn -f
 
 COMANDOS:
 #!/bin/bash
