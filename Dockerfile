@@ -83,3 +83,4 @@ EXPOSE 8000
 
 # Script de inicio
 CMD ["python3", "main.py"]
+
